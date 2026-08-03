@@ -4,6 +4,15 @@
 #define WIFI_SSID "TU_WIFI"
 #define WIFI_PASS "TU_PASSWORD"
 
+/* Extra known networks (work, phone hotspot, ...). The buddy connects to
+ * whichever known network it finds. Leave empty if you only use one. */
+#define WIFI_EXTRA_NETWORKS \
+  /* X("WIFI_TRABAJO", "password") */ \
+  /* X("HotspotCelu", "password") */
+
+/* Local timezone offset for the pomodoro daily counter in direct mode. */
+#define TZ_OFFSET_SECONDS (-3 * 3600) /* Argentina */
+
 /* URL of the companion server running on your PC (companion/server.js).
  * Use the PC's IP on the SAME network the display's WiFi joins
  * (here that's the Wi-Fi adapter, not Ethernet — they're different subnets). */

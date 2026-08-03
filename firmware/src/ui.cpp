@@ -22,8 +22,8 @@ static const int EYE_H = 36;
 
 /* widgets */
 static lv_obj_t *tv, *tilePomo;
-static lv_obj_t *scr, *headerTitle, *planBadge, *planLbl, *connDot;
-static lv_obj_t *body, *eyeL, *eyeR, *mouth, *zzz, *sweat, *statusLbl;
+static lv_obj_t *scr, *headerTitle, *planBadge, *planLbl, *connDot, *srcIcon;
+static lv_obj_t *body, *eyeL, *eyeR, *mouth, *zzz, *sweat, *statusLbl, *provHint;
 static lv_obj_t *footL, *footR;
 static struct {
   lv_obj_t *group, *label, *pct, *bar, *sub;
@@ -153,6 +153,10 @@ void ui_init() {
   lv_obj_set_style_bg_color(connDot, C_MUTED, 0);
   lv_obj_align(connDot, LV_ALIGN_TOP_RIGHT, -14, 12);
 
+  srcIcon = mk_label(scr, &lv_font_montserrat_12, C_MUTED);
+  lv_label_set_text(srcIcon, "");
+  lv_obj_align(srcIcon, LV_ALIGN_TOP_RIGHT, -92, 10);
+
   planBadge = lv_obj_create(scr);
   lv_obj_set_size(planBadge, 52, 20);
   lv_obj_set_style_radius(planBadge, 10, 0);
@@ -211,6 +215,13 @@ void ui_init() {
   lv_obj_align(body, LV_ALIGN_LEFT_MID, 28, -18);
   lv_obj_align(statusLbl, LV_ALIGN_LEFT_MID, 8, 78);
 
+  provHint = mk_label(scr, &lv_font_montserrat_12, C_WARN);
+  lv_obj_set_width(provHint, 190);
+  lv_obj_set_style_text_align(provHint, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_align(provHint, LV_ALIGN_LEFT_MID, 8, 104);
+  lv_label_set_text(provHint, "");
+  lv_obj_add_flag(provHint, LV_OBJ_FLAG_HIDDEN);
+
   /* limit bars, right side */
   for (int i = 0; i < 3; i++) {
     lv_obj_t *g = lv_obj_create(scr);
@@ -258,6 +269,15 @@ void ui_init() {
 
 void ui_show_pomodoro_tile() {
   lv_obj_set_tile_id(tv, 1, 0, LV_ANIM_ON);
+}
+
+void ui_set_provision_hint(const char *ip) {
+  if (ip && ip[0]) {
+    lv_label_set_text_fmt(provHint, "provisioname: node provision.js\nIP: %s", ip);
+    lv_obj_clear_flag(provHint, LV_OBJ_FLAG_HIDDEN);
+  } else {
+    lv_obj_add_flag(provHint, LV_OBJ_FLAG_HIDDEN);
+  }
 }
 
 /* ---------------------------------------------------------------- state */
@@ -347,8 +367,10 @@ void ui_update(ConnState conn, const BuddyData &d) {
     case ST_IDLE:        lv_label_set_text(statusLbl, "listo para ayudar"); break;
     case ST_WORK:
       if (maxPct >= 85) lv_label_set_text(statusLbl, "trabajando... ojo el limite!");
-      else lv_label_set_text_fmt(statusLbl, "trabajando... (%d %s)",
+      else if (d.activeSessions > 0)
+        lv_label_set_text_fmt(statusLbl, "trabajando... (%d %s)",
              d.activeSessions, d.activeSessions == 1 ? "sesion" : "sesiones");
+      else lv_label_set_text(statusLbl, "trabajando...");
       break;
     case ST_CAPPED:      lv_label_set_text(statusLbl, "limite alcanzado"); break;
   }
@@ -382,13 +404,22 @@ void ui_update(ConnState conn, const BuddyData &d) {
     lv_label_set_text(bars[i].sub, sub);
   }
 
+  /* data-source icon: home = companion, antenna = direct API */
+  if (conn == CONN_OK && d.source == SRC_DIRECT) lv_label_set_text(srcIcon, LV_SYMBOL_WIFI);
+  else if (conn == CONN_OK && d.source == SRC_COMPANION) lv_label_set_text(srcIcon, LV_SYMBOL_HOME);
+  else lv_label_set_text(srcIcon, "");
+
   /* footer */
   if (conn == CONN_OK && d.companionOk) {
+    if (d.tokensToday < 0) {
+      lv_label_set_text(footL, "modo directo");
+    } else {
     char tok[16];
     if (d.tokensToday >= 1000000) snprintf(tok, sizeof(tok), "%.1fM", d.tokensToday / 1e6);
     else if (d.tokensToday >= 1000) snprintf(tok, sizeof(tok), "%ldk", d.tokensToday / 1000);
     else snprintf(tok, sizeof(tok), "%ld", d.tokensToday);
     lv_label_set_text_fmt(footL, "hoy: %s tokens", tok);
+    }
     if (d.lastActivityAgoSec >= 0) {
       long m = d.lastActivityAgoSec / 60;
       if (m < 1) lv_label_set_text(footR, "actividad: ahora");

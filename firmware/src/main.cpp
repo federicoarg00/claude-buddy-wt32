@@ -2,13 +2,25 @@
  * LVGL runs on core 1 (Arduino loop); WiFi + HTTP polling on core 0. */
 #include <Arduino.h>
 #include <WiFi.h>
+#include <WiFiMulti.h>
+#include <WebServer.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <lvgl.h>
+#include <time.h>
 #include "display.h"
 #include "ui.h"
 #include "pomodoro.h"
+#include "directapi.h"
 #include "config.h"
+
+/* Defaults for options older config.h files don't define. */
+#ifndef TZ_OFFSET_SECONDS
+#define TZ_OFFSET_SECONDS (-3 * 3600) /* Argentina */
+#endif
+#ifndef WIFI_EXTRA_NETWORKS
+#define WIFI_EXTRA_NETWORKS /* X("ssid2", "pass2") X("hotspot", "pass") */
+#endif
 
 static LGFX lcd;
 
@@ -22,6 +34,10 @@ static lv_color_t *buf1;
 static SemaphoreHandle_t dataMutex;
 static BuddyData gData;
 static ConnState gConn = CONN_BOOTING;
+
+static WiFiMulti wifiMulti;
+static WebServer provServer(80); /* receives tokens from provision/provision.js */
+static volatile bool provServerUp = false;
 
 static void flush_cb(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color_p) {
   int32_t w = area->x2 - area->x1 + 1;
@@ -47,8 +63,8 @@ static void touch_cb(lv_indev_drv_t *drv, lv_indev_data_t *data) {
 /* ---------------------------------------------------------------- net */
 static bool fetch_status(BuddyData &out) {
   HTTPClient http;
-  http.setTimeout(6000);
-  http.setConnectTimeout(4000);
+  http.setTimeout(4000);
+  http.setConnectTimeout(2000); /* fail fast when away from home */
   if (!http.begin(COMPANION_URL)) return false;
   int code = http.GET();
   Serial.printf("[net] GET %s -> %d\n", COMPANION_URL, code);
@@ -67,12 +83,14 @@ static bool fetch_status(BuddyData &out) {
 
   out = BuddyData{};
   out.companionOk = doc["ok"] | false;
+  out.source = SRC_COMPANION;
   strlcpy(out.plan, doc["plan"] | "", sizeof(out.plan));
   JsonArray limits = doc["limits"].as<JsonArray>();
   for (JsonObject l : limits) {
     if (out.nLimits >= 4) break;
     LimitBar &b = out.limits[out.nLimits++];
     strlcpy(b.label, l["label"] | "?", sizeof(b.label));
+    strlcpy(b.kind, l["kind"] | "", sizeof(b.kind));
     b.pct = l["pct"].isNull() ? -1 : (int)l["pct"];
     strlcpy(b.severity, l["severity"] | "normal", sizeof(b.severity));
     b.resetsInSec = l["resetsInSec"].isNull() ? -1 : (long)l["resetsInSec"];
@@ -87,30 +105,40 @@ static bool fetch_status(BuddyData &out) {
   return true;
 }
 
+static void prov_server_start();
+
 static void net_task(void *arg) {
   WiFi.mode(WIFI_STA);
-  WiFi.setAutoReconnect(true);
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  wifiMulti.addAP(WIFI_SSID, WIFI_PASS);
+#define X(ssid, pass) wifiMulti.addAP(ssid, pass);
+  WIFI_EXTRA_NETWORKS
+#undef X
 
+  bool timeStarted = false;
   for (;;) {
-    if (WiFi.status() != WL_CONNECTED) {
-      Serial.printf("[net] wifi status=%d\n", WiFi.status());
+    if (wifiMulti.run(8000) != WL_CONNECTED) {
+      Serial.printf("[net] wifi not connected\n");
       xSemaphoreTake(dataMutex, portMAX_DELAY);
       gConn = CONN_NO_WIFI;
       xSemaphoreGive(dataMutex);
-      vTaskDelay(pdMS_TO_TICKS(2000));
+      vTaskDelay(pdMS_TO_TICKS(3000));
       continue;
     }
-    static bool ipLogged = false;
-    if (!ipLogged) {
-      ipLogged = true;
-      Serial.printf("[net] wifi OK ip=%s gw=%s mask=%s rssi=%d\n",
-                    WiFi.localIP().toString().c_str(), WiFi.gatewayIP().toString().c_str(),
-                    WiFi.subnetMask().toString().c_str(), WiFi.RSSI());
+    if (!timeStarted) {
+      timeStarted = true;
+      configTime(TZ_OFFSET_SECONDS, 0, "pool.ntp.org", "time.google.com");
+      Serial.printf("[net] wifi OK ssid=%s ip=%s rssi=%d\n",
+                    WiFi.SSID().c_str(), WiFi.localIP().toString().c_str(), WiFi.RSSI());
     }
+    /* the lwIP stack exists only once WiFi is up — start the provisioning
+     * endpoint here, never in setup() */
+    if (!provServerUp && !directapi_has_token()) prov_server_start();
 
+    /* companion first (rich data at home), direct API as fallback anywhere */
     BuddyData fresh;
     bool ok = fetch_status(fresh);
+    if (!ok && directapi_has_token()) ok = directapi_fetch(fresh);
+
     xSemaphoreTake(dataMutex, portMAX_DELAY);
     if (ok) {
       gData = fresh;
@@ -119,8 +147,35 @@ static void net_task(void *arg) {
       gConn = CONN_NO_COMPANION;
     }
     xSemaphoreGive(dataMutex);
-    vTaskDelay(pdMS_TO_TICKS(ok ? POLL_INTERVAL_MS : 5000));
+
+    uint32_t waitMs;
+    if (!ok) waitMs = 5000;
+    else if (fresh.source == SRC_DIRECT) waitMs = directapi_wait_ms();
+    else waitMs = POLL_INTERVAL_MS;
+    vTaskDelay(pdMS_TO_TICKS(waitMs));
   }
+}
+
+/* ------------------------------------------------------------ provisioning */
+static void prov_server_start() {
+  provServer.on("/token", HTTP_POST, []() {
+    JsonDocument doc;
+    if (deserializeJson(doc, provServer.arg("plain"))) {
+      provServer.send(400, "application/json", "{\"ok\":false,\"error\":\"bad json\"}");
+      return;
+    }
+    const char *at = doc["accessToken"] | "";
+    const char *rt = doc["refreshToken"] | "";
+    if (!at[0] || !rt[0]) {
+      provServer.send(400, "application/json", "{\"ok\":false,\"error\":\"missing tokens\"}");
+      return;
+    }
+    directapi_store_tokens(at, rt, doc["expiresAt"] | 0LL, doc["plan"] | "");
+    provServer.send(200, "application/json", "{\"ok\":true}");
+  });
+  provServer.begin();
+  provServerUp = true;
+  Serial.println("[prov] token endpoint listening on :80");
 }
 
 /* ---------------------------------------------------------------- arduino */
@@ -150,14 +205,29 @@ void setup() {
   lv_indev_drv_register(&indev_drv);
 
   ui_init();
+  directapi_init();
 
   dataMutex = xSemaphoreCreateMutex();
-  xTaskCreatePinnedToCore(net_task, "net", 8192, nullptr, 1, nullptr, 0);
+  xTaskCreatePinnedToCore(net_task, "net", 10240, nullptr, 1, nullptr, 0);
 }
 
 void loop() {
   static uint32_t lastUiPush = 0;
   lv_timer_handler();
+  if (provServerUp) {
+    provServer.handleClient();
+    if (directapi_has_token()) { /* provisioning done, close the door */
+      provServer.stop();
+      provServerUp = false;
+      ui_set_provision_hint(nullptr);
+    } else if (WiFi.status() == WL_CONNECTED) {
+      static uint32_t lastHint = 0;
+      if (millis() - lastHint > 2000) {
+        lastHint = millis();
+        ui_set_provision_hint(WiFi.localIP().toString().c_str());
+      }
+    }
+  }
   if (millis() - lastUiPush > 500) {
     lastUiPush = millis();
     BuddyData copy;

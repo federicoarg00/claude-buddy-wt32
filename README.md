@@ -22,18 +22,39 @@ Clawd reacciona: parpadea y respira en idle, rebota mientras hay una sesión act
 duerme (`z z z`) tras 30 min sin actividad, suda cerca del límite (≥85 %) y se apaga
 gris con la boca larga cuando un límite llega al 100 %.
 
-## Arquitectura
+## Arquitectura (híbrida)
 
 ```
-~/.claude (credenciales + actividad)
-        │
-        ▼
-companion/server.js  (Node, sin dependencias)  →  http://<PC>:8787/status
-        │  · consulta el endpoint OAuth de usage de Anthropic cada 60 s
-        │  · detecta sesiones activas por mtime de ~/.claude/projects/**.jsonl
-        ▼
-firmware (ESP32 + LVGL)  →  hace polling HTTP cada 15 s por WiFi
+        EN CASA                                EN CUALQUIER LADO
+~/.claude (credenciales + actividad)     cuenta de Claude (sesión OAuth propia
+        │                                del buddy, provisionada una vez)
+        ▼                                          ▲ HTTPS + roots CA pineados
+companion/server.js → http://<PC>:8787/status      │
+        │  · usage de Anthropic cada 120 s         │ api.anthropic.com/api/oauth/usage
+        │  · actividad por mtime de transcripts    │ cada 120 s, backoff ante 429
+        ▼                                          │
+firmware (ESP32 + LVGL) ── intenta companion ──────┘ si no lo encuentra: modo directo
 ```
+
+El buddy intenta el companion primero (datos ricos: tokens del día, sesiones).
+Si no lo alcanza — estás de viaje, la PC apagada — pasa solo a **modo directo**:
+consulta tu cuenta de Claude directamente (ícono de antena en vez de casita).
+Multi-WiFi: agregá redes conocidas (trabajo, hotspot del celu) en `config.h`
+vía `WIFI_EXTRA_NETWORKS`. En modo directo la actividad se infiere del avance
+del % de la ventana de 5 h (detecta uso desde cualquier dispositivo, incluso
+el móvil); "hoy: N tokens" solo está disponible en modo casa.
+
+### Provisioning del modo directo (una sola vez)
+
+```bash
+node provision/provision.js
+```
+
+Abre el navegador para autorizar al buddy en tu cuenta (flujo OAuth + PKCE de
+Claude, sesión independiente — no toca el login de Claude Code), y le manda los
+tokens a la pantalla por la LAN (la IP aparece en pantalla hasta provisionar).
+Los tokens viven en la flash del dispositivo (NVS) y se auto-renuevan; si
+perdés el buddy, revocá la sesión desde claude.ai.
 
 ## 1. Companion (en la PC donde corre Claude Code)
 

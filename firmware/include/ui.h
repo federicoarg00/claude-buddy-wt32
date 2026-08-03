@@ -8,8 +8,15 @@ enum ConnState {
   CONN_OK,
 };
 
+enum DataSource {
+  SRC_NONE,
+  SRC_COMPANION,  /* rich data via the PC companion (home) */
+  SRC_DIRECT,     /* straight from the Anthropic API (anywhere) */
+};
+
 struct LimitBar {
   char label[16];
+  char kind[16];
   int pct;              // -1 = unknown
   char severity[12];
   long resetsInSec;     // -1 = unknown
@@ -21,13 +28,16 @@ struct BuddyData {
   char plan[12] = "";
   int nLimits = 0;
   LimitBar limits[4];
+  DataSource source = SRC_NONE;
   bool active = false;
   int activeSessions = 0;
   long lastActivityAgoSec = -1;
-  long tokensToday = 0;
-  char date[12] = "";   /* companion's local date YYYY-MM-DD */
+  long tokensToday = 0; /* -1 = unavailable (direct mode) */
+  char date[12] = "";   /* local date YYYY-MM-DD (companion or NTP) */
 };
 
 void ui_init();
 void ui_update(ConnState conn, const BuddyData &d);
 void ui_show_pomodoro_tile();
+/* Show "provisioná el buddy: IP x.x.x.x" while no OAuth token is stored. */
+void ui_set_provision_hint(const char *ip);
