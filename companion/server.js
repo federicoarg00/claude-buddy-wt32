@@ -19,7 +19,6 @@ const os = require('os');
 const PORT = Number(process.env.BUDDY_PORT || 8787);
 const CLAUDE_DIR = path.join(os.homedir(), '.claude');
 const CREDS_FILE = path.join(CLAUDE_DIR, '.credentials.json');
-const STATS_FILE = path.join(CLAUDE_DIR, 'stats-cache.json');
 const PROJECTS_DIR = path.join(CLAUDE_DIR, 'projects');
 const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
 const POLL_MS = 120_000;         // upstream usage poll (gentle: the endpoint 429s if hammered)
@@ -134,14 +133,54 @@ function scanActivity() {
   return { newest, activeSessions };
 }
 
-function tokensToday() {
-  try {
-    const stats = JSON.parse(fs.readFileSync(STATS_FILE, 'utf8'));
-    const today = new Date().toLocaleDateString('sv'); // YYYY-MM-DD in local time
-    const entry = (stats.dailyModelTokens || []).find((e) => e.date === today);
-    if (!entry) return 0;
-    return Object.values(entry.tokensByModel || {}).reduce((a, b) => a + b, 0);
-  } catch { return 0; }
+/* Tokens used today, counted straight from the session transcripts
+ * (~/.claude/projects/**\/*.jsonl) — Claude Code's stats-cache.json is only
+ * recomputed occasionally, so it can lag by weeks. Incremental: we remember
+ * the byte offset already parsed per file and only read what was appended. */
+let tokenDay = null;
+let tokensTodayCount = 0;
+const fileOffsets = new Map(); // path -> bytes already parsed
+
+function refreshTokens() {
+  const today = new Date().toLocaleDateString('sv');
+  if (tokenDay !== today) { tokenDay = today; tokensTodayCount = 0; fileOffsets.clear(); }
+  const dayStart = new Date(`${today}T00:00:00`).getTime();
+  let dirs = [];
+  try { dirs = fs.readdirSync(PROJECTS_DIR); } catch { return; }
+  for (const d of dirs) {
+    const dir = path.join(PROJECTS_DIR, d);
+    let files = [];
+    try { files = fs.readdirSync(dir); } catch { continue; }
+    for (const f of files) {
+      if (!f.endsWith('.jsonl')) continue;
+      const p = path.join(dir, f);
+      let st;
+      try { st = fs.statSync(p); } catch { continue; }
+      if (st.mtimeMs < dayStart) continue; // not touched today
+      const prev = fileOffsets.get(p) || 0;
+      if (st.size <= prev) continue;
+      try {
+        const fd = fs.openSync(p, 'r');
+        const buf = Buffer.alloc(st.size - prev);
+        fs.readSync(fd, buf, 0, buf.length, prev);
+        fs.closeSync(fd);
+        const text = buf.toString('utf8');
+        const lastNl = text.lastIndexOf('\n');
+        if (lastNl < 0) continue; // no complete line yet; retry next round
+        fileOffsets.set(p, prev + Buffer.byteLength(text.slice(0, lastNl + 1)));
+        for (const line of text.slice(0, lastNl).split('\n')) {
+          if (!line.includes('"usage"')) continue;
+          try {
+            const j = JSON.parse(line);
+            const u = j.message?.usage;
+            if (!u) continue;
+            if (j.timestamp && new Date(j.timestamp).toLocaleDateString('sv') !== today) continue;
+            tokensTodayCount += (u.input_tokens || 0) + (u.output_tokens || 0);
+          } catch { /* partial or non-JSON line */ }
+        }
+      } catch { /* file vanished mid-read */ }
+    }
+  }
 }
 
 // ---------------------------------------------------------------- pollers
@@ -190,7 +229,7 @@ function refreshActivity() {
     active: newest > Date.now() - ACTIVITY_WINDOW_MS,
     lastActivityAgoSec: ago,
     activeSessions,
-    tokensToday: tokensToday(),
+    tokensToday: tokensTodayCount,
   };
 }
 
@@ -231,4 +270,6 @@ server.listen(PORT, '0.0.0.0', () => {
 });
 
 refreshUsage(); // self-reschedules with backoff
+refreshTokens();
 refreshActivity();
+setInterval(refreshTokens, 60_000);
