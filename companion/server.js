@@ -21,6 +21,8 @@ const CLAUDE_DIR = path.join(os.homedir(), '.claude');
 const CREDS_FILE = path.join(CLAUDE_DIR, '.credentials.json');
 const PROJECTS_DIR = path.join(CLAUDE_DIR, 'projects');
 const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
+const OAUTH_TOKEN_URL = 'https://console.anthropic.com/v1/oauth/token';
+const OAUTH_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e'; // Claude Code's public OAuth client id
 const POLL_MS = 120_000;         // upstream usage poll (gentle: the endpoint 429s if hammered)
 const CACHE_FILE = path.join(__dirname, '.cache.json');
 const POLL_MAX_MS = 10 * 60_000; // backoff cap after repeated 429s
@@ -63,11 +65,67 @@ function httpsGetJson(url, headers) {
   });
 }
 
+function httpsPostJson(url, body) {
+  return new Promise((resolve, reject) => {
+    const data = JSON.stringify(body);
+    const u = new URL(url);
+    const req = https.request(
+      {
+        hostname: u.hostname,
+        path: u.pathname,
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) },
+        timeout: 15_000,
+      },
+      (res) => {
+        let b = '';
+        res.on('data', (c) => (b += c));
+        res.on('end', () => {
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            try { resolve(JSON.parse(b)); } catch { reject(new Error('bad JSON from oauth endpoint')); }
+          } else {
+            reject(new Error(`token refresh HTTP ${res.statusCode}: ${b.slice(0, 200)}`));
+          }
+        });
+      },
+    );
+    req.on('timeout', () => req.destroy(new Error('token refresh timeout')));
+    req.on('error', reject);
+    req.write(data);
+    req.end();
+  });
+}
+
+/**
+ * Refresh the access token with the stored refresh token (the desktop app
+ * keeps its own session and doesn't update this file, so the access token
+ * here goes stale every few hours). The rotated tokens are written back to
+ * the credentials file atomically so Claude Code's CLI stays logged in too.
+ */
+async function refreshOAuth(oauth) {
+  const resp = await httpsPostJson(OAUTH_TOKEN_URL, {
+    grant_type: 'refresh_token',
+    refresh_token: oauth.refreshToken,
+    client_id: OAUTH_CLIENT_ID,
+  });
+  const raw = JSON.parse(fs.readFileSync(CREDS_FILE, 'utf8'));
+  raw.claudeAiOauth = {
+    ...raw.claudeAiOauth,
+    accessToken: resp.access_token,
+    refreshToken: resp.refresh_token || raw.claudeAiOauth.refreshToken,
+    expiresAt: Date.now() + (resp.expires_in ? resp.expires_in * 1000 : 3600_000),
+  };
+  const tmp = CREDS_FILE + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(raw));
+  fs.renameSync(tmp, CREDS_FILE);
+  console.log(`[${new Date().toISOString()}] OAuth token refreshed, expires ${new Date(raw.claudeAiOauth.expiresAt).toISOString()}`);
+  return raw.claudeAiOauth;
+}
+
 async function fetchUsage() {
-  const oauth = readCreds();
-  if (oauth.expiresAt && oauth.expiresAt < Date.now()) {
-    // Claude Code refreshes this file itself whenever it runs; we just report it.
-    throw new Error('OAuth token expired — run any `claude` command once to refresh it');
+  let oauth = readCreds();
+  if (oauth.expiresAt && oauth.expiresAt < Date.now() + 120_000) {
+    oauth = await refreshOAuth(oauth);
   }
   return httpsGetJson(USAGE_URL, {
     Authorization: `Bearer ${oauth.accessToken}`,
