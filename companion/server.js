@@ -1,0 +1,234 @@
+#!/usr/bin/env node
+/**
+ * Claude Buddy companion server.
+ *
+ * Reads the local Claude Code OAuth credentials, polls Anthropic's usage
+ * endpoint (the same data `/usage` shows) plus local ~/.claude activity,
+ * and serves a compact JSON snapshot for the WT32-SC01 buddy display.
+ *
+ * No npm dependencies — Node 18+ built-ins only.
+ *
+ *   node server.js            → serves http://0.0.0.0:8787/status
+ */
+const http = require('http');
+const https = require('https');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+
+const PORT = Number(process.env.BUDDY_PORT || 8787);
+const CLAUDE_DIR = path.join(os.homedir(), '.claude');
+const CREDS_FILE = path.join(CLAUDE_DIR, '.credentials.json');
+const STATS_FILE = path.join(CLAUDE_DIR, 'stats-cache.json');
+const PROJECTS_DIR = path.join(CLAUDE_DIR, 'projects');
+const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
+const POLL_MS = 120_000;         // upstream usage poll (gentle: the endpoint 429s if hammered)
+const CACHE_FILE = path.join(__dirname, '.cache.json');
+const POLL_MAX_MS = 10 * 60_000; // backoff cap after repeated 429s
+const STALE_MS = 10 * 60_000;    // report ok:false only when data is older than this
+const ACTIVITY_WINDOW_MS = 5 * 60_000; // "working" if a session file changed in the last 5 min
+
+// ---------------------------------------------------------------- state
+let snapshot = {
+  ok: false,
+  error: 'starting',
+  updatedAt: null,
+  plan: null,
+  limits: [],    // [{kind, label, pct, severity, resetsAt, isActive}, ...]
+  activity: { active: false, lastActivityAgoSec: null, activeSessions: 0, tokensToday: 0 },
+};
+
+// ---------------------------------------------------------------- helpers
+function readCreds() {
+  const raw = JSON.parse(fs.readFileSync(CREDS_FILE, 'utf8'));
+  const oauth = raw.claudeAiOauth;
+  if (!oauth || !oauth.accessToken) throw new Error('no claudeAiOauth in credentials file');
+  return oauth;
+}
+
+function httpsGetJson(url, headers) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, { headers, timeout: 15_000 }, (res) => {
+      let body = '';
+      res.on('data', (c) => (body += c));
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          try { resolve(JSON.parse(body)); } catch (e) { reject(new Error('bad JSON from usage endpoint')); }
+        } else {
+          reject(new Error(`usage endpoint HTTP ${res.statusCode}: ${body.slice(0, 200)}`));
+        }
+      });
+    });
+    req.on('timeout', () => req.destroy(new Error('usage endpoint timeout')));
+    req.on('error', reject);
+  });
+}
+
+async function fetchUsage() {
+  const oauth = readCreds();
+  if (oauth.expiresAt && oauth.expiresAt < Date.now()) {
+    // Claude Code refreshes this file itself whenever it runs; we just report it.
+    throw new Error('OAuth token expired — run any `claude` command once to refresh it');
+  }
+  return httpsGetJson(USAGE_URL, {
+    Authorization: `Bearer ${oauth.accessToken}`,
+    'anthropic-beta': 'oauth-2025-04-20',
+    'User-Agent': 'claude-buddy-companion/1.0',
+    Accept: 'application/json',
+  });
+}
+
+/**
+ * Map the usage response into an ordered list of limit bars for the display.
+ * Primary source is the `limits` array (same data the /usage command renders);
+ * falls back to the legacy top-level five_hour/seven_day objects.
+ */
+function mapLimits(usage) {
+  const out = [];
+  if (Array.isArray(usage.limits) && usage.limits.length) {
+    for (const l of usage.limits) {
+      let label = l.kind;
+      if (l.kind === 'session') label = '5h';
+      else if (l.kind === 'weekly_all') label = 'Semana';
+      else if (l.kind === 'weekly_scoped') label = l.scope?.model?.display_name || 'Modelo';
+      out.push({
+        kind: l.kind,
+        label,
+        pct: typeof l.percent === 'number' ? Math.round(l.percent) : null,
+        severity: l.severity || 'normal',
+        resetsAt: l.resets_at || null,
+        isActive: !!l.is_active,
+      });
+    }
+  } else {
+    for (const [key, name] of [['five_hour', '5h'], ['seven_day', 'Semana']]) {
+      const v = usage[key];
+      if (v && typeof v === 'object' && typeof v.utilization === 'number') {
+        out.push({ kind: key, label: name, pct: Math.round(v.utilization), severity: 'normal', resetsAt: v.resets_at || null, isActive: false });
+      }
+    }
+  }
+  return out;
+}
+
+/** Most recent mtime among session .jsonl files, plus count changed recently. */
+function scanActivity() {
+  let newest = 0;
+  let activeSessions = 0;
+  const cutoff = Date.now() - ACTIVITY_WINDOW_MS;
+  let dirs = [];
+  try { dirs = fs.readdirSync(PROJECTS_DIR); } catch { return { newest, activeSessions }; }
+  for (const d of dirs) {
+    let files = [];
+    const dir = path.join(PROJECTS_DIR, d);
+    try { files = fs.readdirSync(dir); } catch { continue; }
+    for (const f of files) {
+      if (!f.endsWith('.jsonl')) continue;
+      try {
+        const m = fs.statSync(path.join(dir, f)).mtimeMs;
+        if (m > newest) newest = m;
+        if (m > cutoff) activeSessions++;
+      } catch { /* file may vanish mid-scan */ }
+    }
+  }
+  return { newest, activeSessions };
+}
+
+function tokensToday() {
+  try {
+    const stats = JSON.parse(fs.readFileSync(STATS_FILE, 'utf8'));
+    const today = new Date().toLocaleDateString('sv'); // YYYY-MM-DD in local time
+    const entry = (stats.dailyModelTokens || []).find((e) => e.date === today);
+    if (!entry) return 0;
+    return Object.values(entry.tokensByModel || {}).reduce((a, b) => a + b, 0);
+  } catch { return 0; }
+}
+
+// ---------------------------------------------------------------- pollers
+let lastGoodAt = 0;
+let lastError = null;
+let pollDelay = POLL_MS;
+
+/* Survive restarts: reload the last good snapshot so a relaunch doesn't
+ * show "no data" while the (rate-limited) endpoint warms back up. */
+try {
+  const cached = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
+  if (cached.snapshot && cached.lastGoodAt) {
+    snapshot = cached.snapshot;
+    lastGoodAt = cached.lastGoodAt;
+  }
+} catch { /* no cache yet */ }
+
+async function refreshUsage() {
+  try {
+    const oauth = readCreds();
+    const usage = await fetchUsage();
+    snapshot.error = null;
+    snapshot.plan = oauth.subscriptionType || null;
+    snapshot.limits = mapLimits(usage);
+    snapshot.updatedAt = new Date().toISOString();
+    lastGoodAt = Date.now();
+    lastError = null;
+    pollDelay = POLL_MS;
+    try { fs.writeFileSync(CACHE_FILE, JSON.stringify({ snapshot, lastGoodAt })); } catch { /* best effort */ }
+  } catch (e) {
+    lastError = String(e.message || e);
+    // Transient failures (esp. 429 rate limits) keep serving the last good
+    // data; back off so we stop poking a throttled endpoint.
+    if (lastError.includes('429')) pollDelay = Math.min(pollDelay * 2, POLL_MAX_MS);
+    else pollDelay = POLL_MS;
+    console.error(`[${new Date().toISOString()}] usage poll failed (next in ${pollDelay / 1000}s): ${lastError}`);
+  } finally {
+    setTimeout(refreshUsage, pollDelay);
+  }
+}
+
+function refreshActivity() {
+  const { newest, activeSessions } = scanActivity();
+  const ago = newest ? Math.round((Date.now() - newest) / 1000) : null;
+  snapshot.activity = {
+    active: newest > Date.now() - ACTIVITY_WINDOW_MS,
+    lastActivityAgoSec: ago,
+    activeSessions,
+    tokensToday: tokensToday(),
+  };
+}
+
+// ---------------------------------------------------------------- server
+const server = http.createServer((req, res) => {
+  if (req.url === '/status') {
+    refreshActivity(); // cheap, do it per-request so "working" is fresh
+    const now = Date.now();
+    const fresh = lastGoodAt > 0 && now - lastGoodAt < STALE_MS;
+    const out = {
+      ...snapshot,
+      ok: fresh,
+      error: fresh ? null : lastError || snapshot.error,
+      staleSec: lastGoodAt ? Math.round((now - lastGoodAt) / 1000) : null,
+      dateLocal: new Date().toLocaleDateString('sv'), // YYYY-MM-DD, for daily counters on the display
+      lastError,
+      limits: snapshot.limits.map((l) => ({
+        ...l,
+        resetsInSec: l.resetsAt ? Math.max(0, Math.round((Date.parse(l.resetsAt) - now) / 1000)) : null,
+      })),
+    };
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify(out));
+  } else if (req.url === '/') {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('claude-buddy companion. GET /status for JSON.\n');
+  } else {
+    res.writeHead(404);
+    res.end();
+  }
+});
+
+server.listen(PORT, '0.0.0.0', () => {
+  const nets = os.networkInterfaces();
+  const ips = Object.values(nets).flat().filter((n) => n && n.family === 'IPv4' && !n.internal).map((n) => n.address);
+  console.log(`claude-buddy companion listening on port ${PORT}`);
+  console.log(`LAN address(es): ${ips.map((ip) => `http://${ip}:${PORT}/status`).join('  ')}`);
+});
+
+refreshUsage(); // self-reschedules with backoff
+refreshActivity();

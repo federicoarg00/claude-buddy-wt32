@@ -1,0 +1,5 @@
+firmware/.pio/
+firmware/include/config.h
+node_modules/
+*.log
+companion/.cache.json
