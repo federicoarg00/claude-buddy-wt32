@@ -12,14 +12,12 @@
 #include "ui.h"
 #include "pomodoro.h"
 #include "directapi.h"
+#include "wifimgr.h"
 #include "config.h"
 
 /* Defaults for options older config.h files don't define. */
 #ifndef TZ_OFFSET_SECONDS
 #define TZ_OFFSET_SECONDS (-3 * 3600) /* Argentina */
-#endif
-#ifndef WIFI_EXTRA_NETWORKS
-#define WIFI_EXTRA_NETWORKS /* X("ssid2", "pass2") X("hotspot", "pass") */
 #endif
 
 static LGFX lcd;
@@ -35,8 +33,9 @@ static SemaphoreHandle_t dataMutex;
 static BuddyData gData;
 static ConnState gConn = CONN_BOOTING;
 
-static WiFiMulti wifiMulti;
-static WebServer provServer(80); /* receives tokens from provision/provision.js */
+/* Receives tokens from provision/provision.js. Shares port 80 with the WiFi
+ * portal but they never run at the same time (net_task stops this one first). */
+static WebServer provServer(80);
 static volatile bool provServerUp = false;
 
 static void flush_cb(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color_p) {
@@ -107,22 +106,49 @@ static bool fetch_status(BuddyData &out) {
 
 static void prov_server_start();
 
+static void set_conn(ConnState c) {
+  xSemaphoreTake(dataMutex, portMAX_DELAY);
+  gConn = c;
+  xSemaphoreGive(dataMutex);
+}
+
 static void net_task(void *arg) {
   WiFi.mode(WIFI_STA);
-  wifiMulti.addAP(WIFI_SSID, WIFI_PASS);
-#define X(ssid, pass) wifiMulti.addAP(ssid, pass);
-  WIFI_EXTRA_NETWORKS
-#undef X
 
   bool timeStarted = false;
+  int failStreak = 0;
   for (;;) {
-    if (wifiMulti.run(8000) != WL_CONNECTED) {
-      Serial.printf("[net] wifi not connected\n");
-      xSemaphoreTake(dataMutex, portMAX_DELAY);
-      gConn = CONN_NO_WIFI;
-      xSemaphoreGive(dataMutex);
-      vTaskDelay(pdMS_TO_TICKS(3000));
+    /* --- WiFi config portal lifecycle --- */
+    if (wifimgr_portal_active()) {
+      set_conn(CONN_PORTAL);
+      if (wifimgr_portal_should_close()) {
+        wifimgr_stop_portal();
+        ui_set_hint_text(nullptr);
+        failStreak = 0;
+      }
+      vTaskDelay(pdMS_TO_TICKS(500));
       continue;
+    }
+    if (wifimgr_portal_requested()) {
+      if (provServerUp) { provServer.stop(); provServerUp = false; } /* free port 80 */
+      wifimgr_start_portal(WiFi.status() == WL_CONNECTED);
+      char hint[96];
+      snprintf(hint, sizeof(hint), "red: %s\nclave: %s\nabri http://192.168.4.1",
+               wifimgr_ap_ssid(), wifimgr_ap_pass());
+      ui_set_hint_text(hint);
+      continue;
+    }
+
+    if (WiFi.status() != WL_CONNECTED) {
+      set_conn(CONN_NO_WIFI);
+      if (!wifimgr_connect(8000)) {
+        Serial.printf("[net] no known network found (streak %d)\n", ++failStreak);
+        if (failStreak >= 2) { wifimgr_request_portal(); }
+        vTaskDelay(pdMS_TO_TICKS(2000));
+        continue;
+      }
+      failStreak = 0;
+      timeStarted = false; /* re-sync NTP on a new network */
     }
     if (!timeStarted) {
       timeStarted = true;
@@ -202,10 +228,13 @@ void setup() {
   lv_indev_drv_init(&indev_drv);
   indev_drv.type = LV_INDEV_TYPE_POINTER;
   indev_drv.read_cb = touch_cb;
+  indev_drv.long_press_time = 1000; /* deliberate hold to open the WiFi portal */
   lv_indev_drv_register(&indev_drv);
 
   ui_init();
   directapi_init();
+  wifimgr_init();
+  ui_on_body_longpress([]() { wifimgr_request_portal(); });
 
   dataMutex = xSemaphoreCreateMutex();
   xTaskCreatePinnedToCore(net_task, "net", 10240, nullptr, 1, nullptr, 0);
@@ -214,6 +243,8 @@ void setup() {
 void loop() {
   static uint32_t lastUiPush = 0;
   lv_timer_handler();
+  wifimgr_handle();
+  if (Serial.available() && Serial.read() == 'p') wifimgr_request_portal();
   if (provServerUp) {
     provServer.handleClient();
     if (directapi_has_token()) { /* provisioning done, close the door */

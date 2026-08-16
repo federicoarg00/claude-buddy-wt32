@@ -16,7 +16,7 @@
 #define C_EYE    lv_color_hex(0x2E2C28)
 #define C_GRAYBODY lv_color_hex(0x8C8880)
 
-enum BuddyState { ST_BOOT, ST_NO_WIFI, ST_NO_COMPANION, ST_SLEEP, ST_IDLE, ST_WORK, ST_CAPPED };
+enum BuddyState { ST_BOOT, ST_NO_WIFI, ST_NO_COMPANION, ST_SLEEP, ST_IDLE, ST_WORK, ST_CAPPED, ST_PORTAL };
 
 static const int EYE_H = 36;
 
@@ -280,6 +280,24 @@ void ui_set_provision_hint(const char *ip) {
   }
 }
 
+void ui_set_hint_text(const char *text) {
+  if (text && text[0]) {
+    lv_label_set_text(provHint, text);
+    lv_obj_clear_flag(provHint, LV_OBJ_FLAG_HIDDEN);
+  } else {
+    lv_obj_add_flag(provHint, LV_OBJ_FLAG_HIDDEN);
+  }
+}
+
+static void (*bodyLpCb)(void) = nullptr;
+static void body_lp_event(lv_event_t *) {
+  if (bodyLpCb) bodyLpCb();
+}
+void ui_on_body_longpress(void (*cb)(void)) {
+  bodyLpCb = cb;
+  lv_obj_add_event_cb(body, body_lp_event, LV_EVENT_LONG_PRESSED, nullptr);
+}
+
 /* ---------------------------------------------------------------- state */
 static void apply_state(BuddyState s) {
   if (s == curState) return;
@@ -323,6 +341,11 @@ static void apply_state(BuddyState s) {
       start_body_anim(2, 1800);
       lv_obj_set_style_opa(body, LV_OPA_70, 0);
       break;
+    case ST_PORTAL:
+      set_eyes(EYE_H);
+      start_eye_dart(true); /* curious: looking around for new networks */
+      start_body_anim(3, 1200);
+      break;
   }
 }
 
@@ -338,6 +361,7 @@ void ui_update(ConnState conn, const BuddyData &d) {
   /* connection dot */
   lv_obj_set_style_bg_color(connDot,
       conn == CONN_OK ? lv_color_hex(0x7BAE6C)
+    : conn == CONN_PORTAL ? C_ORANGE
     : conn == CONN_BOOTING ? C_MUTED : C_BAD, 0);
 
   int maxPct = -1;
@@ -345,7 +369,8 @@ void ui_update(ConnState conn, const BuddyData &d) {
 
   /* derive buddy state */
   BuddyState s;
-  if (conn == CONN_NO_WIFI) s = ST_NO_WIFI;
+  if (conn == CONN_PORTAL) s = ST_PORTAL;
+  else if (conn == CONN_NO_WIFI) s = ST_NO_WIFI;
   else if (conn == CONN_NO_COMPANION || (conn == CONN_OK && !d.companionOk)) s = ST_NO_COMPANION;
   else if (conn == CONN_BOOTING) s = ST_BOOT;
   else if (maxPct >= 100) s = ST_CAPPED;
@@ -373,6 +398,7 @@ void ui_update(ConnState conn, const BuddyData &d) {
       else lv_label_set_text(statusLbl, "trabajando...");
       break;
     case ST_CAPPED:      lv_label_set_text(statusLbl, "limite alcanzado"); break;
+    case ST_PORTAL:      lv_label_set_text(statusLbl, "config de WiFi"); break;
   }
 
   /* plan badge */

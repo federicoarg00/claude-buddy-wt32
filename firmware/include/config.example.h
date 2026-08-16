@@ -13,6 +13,11 @@
 /* Local timezone offset for the pomodoro daily counter in direct mode. */
 #define TZ_OFFSET_SECONDS (-3 * 3600) /* Argentina */
 
+/* WiFi config portal (long-press Clawd, or automatic when no known network
+ * is found). The AP password is shown on the display. */
+#define PORTAL_AP_SSID "ClaudeBuddy-Setup"
+#define PORTAL_AP_PASS "clawd123"
+
 /* URL of the companion server running on your PC (companion/server.js).
  * Use the PC's IP on the SAME network the display's WiFi joins
  * (here that's the Wi-Fi adapter, not Ethernet — they're different subnets). */

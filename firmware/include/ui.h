@@ -6,6 +6,7 @@ enum ConnState {
   CONN_NO_WIFI,
   CONN_NO_COMPANION,
   CONN_OK,
+  CONN_PORTAL,   /* WiFi config portal (AP) is running */
 };
 
 enum DataSource {
@@ -41,3 +42,7 @@ void ui_update(ConnState conn, const BuddyData &d);
 void ui_show_pomodoro_tile();
 /* Show "provisioná el buddy: IP x.x.x.x" while no OAuth token is stored. */
 void ui_set_provision_hint(const char *ip);
+/* Free-form hint under the status label (portal instructions etc). */
+void ui_set_hint_text(const char *text);
+/* Long-press on Clawd's body (e.g. to open the WiFi portal). */
+void ui_on_body_longpress(void (*cb)(void));
