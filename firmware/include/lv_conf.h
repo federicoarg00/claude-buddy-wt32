@@ -7,7 +7,10 @@
 #define LV_COLOR_16_SWAP 0
 
 #define LV_MEM_CUSTOM 0
-#define LV_MEM_SIZE (40U * 1024U)
+#define LV_MEM_SIZE (64U * 1024U) /* 3 tiles + calendar cells need headroom;
+                                   * at 40K the tileview snap anim failed to
+                                   * alloc and swipes froze mid-scroll.
+                                   * 72K overflows dram0 at link time. */
 
 #define LV_TICK_CUSTOM 1
 #define LV_TICK_CUSTOM_INCLUDE "Arduino.h"

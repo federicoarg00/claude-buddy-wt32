@@ -244,6 +244,10 @@ void setup() {
   lv_indev_drv_register(&indev_drv);
 
   ui_init();
+  lv_mem_monitor_t mon;
+  lv_mem_monitor(&mon);
+  Serial.printf("[ui] lv_mem: %d%% used, frag %d%%, biggest free %u\n",
+                mon.used_pct, mon.frag_pct, (unsigned)mon.free_biggest_size);
   directapi_init();
   wifimgr_init();
   ui_on_body_longpress([]() { wifimgr_request_portal(); });
