@@ -33,9 +33,27 @@ static char today[12] = "";
 
 static Preferences prefs;
 
+/* history of past days, oldest first, persisted as an NVS blob */
+static const int HIST_MAX = 40;
+static PomoDay hist[HIST_MAX];
+static int nHist = 0;
+static void (*onChange)() = nullptr;
+
 /* widgets */
 static lv_obj_t *arc, *timeLbl, *phaseLbl, *hintLbl, *countLbl, *dots[4];
 static lv_obj_t *flashOverlay = nullptr;
+
+/* days since 1970-01-01 from "YYYY-MM-DD" (days-from-civil, H. Hinnant) */
+static uint16_t day_num(const char *date) {
+  int Y, M, D;
+  if (sscanf(date, "%d-%d-%d", &Y, &M, &D) != 3) return 0;
+  int y = Y - (M <= 2);
+  int era = y / 400;
+  int yoe = y - era * 400;
+  int doy = (153 * (M + (M > 2 ? -3 : 9)) + 2) / 5 + D - 1;
+  int doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  return (uint16_t)((long)era * 146097 + doe - 719468);
+}
 
 /* ---------------------------------------------------------------- persist */
 static void persist() {
@@ -43,21 +61,63 @@ static void persist() {
   prefs.putString("date", today);
 }
 
+static void hist_save() { prefs.putBytes("hist", hist, nHist * sizeof(PomoDay)); }
+
+static void hist_load() {
+  size_t len = prefs.getBytesLength("hist");
+  nHist = min((int)(len / sizeof(PomoDay)), HIST_MAX);
+  if (nHist) prefs.getBytes("hist", hist, nHist * sizeof(PomoDay));
+}
+
+static void hist_append(uint16_t day, uint16_t count) {
+  if (!day || !count) return;
+  for (int i = 0; i < nHist; i++)
+    if (hist[i].day == day) { hist[i].count = max(hist[i].count, count); hist_save(); return; }
+  if (nHist == HIST_MAX) {
+    for (int i = 1; i < HIST_MAX; i++) hist[i - 1] = hist[i];
+    nHist--;
+  }
+  hist[nHist].day = day;
+  hist[nHist].count = count;
+  nHist++;
+  hist_save();
+}
+
 void pomodoro_set_date(const char *dateLocal) {
   if (!dateLocal || !dateLocal[0]) return;
   if (strcmp(today, dateLocal) == 0) return;
   bool firstSync = (today[0] == 0);
+  char prev[12];
+  strlcpy(prev, today, sizeof(prev));
   strlcpy(today, dateLocal, sizeof(today));
   if (firstSync) {
-    /* boot: keep the persisted count if it's from the same day */
+    /* boot: keep the persisted count if it's from the same day; if the
+     * device slept past midnight, archive the stale day into history */
     String saved = prefs.getString("date", "");
-    if (saved == today) todayCount = prefs.getInt("count", 0);
-    else { todayCount = 0; persist(); }
+    if (saved == today) {
+      todayCount = prefs.getInt("count", 0);
+    } else {
+      if (saved.length()) hist_append(day_num(saved.c_str()), prefs.getInt("count", 0));
+      todayCount = 0;
+      persist();
+    }
   } else {
-    todayCount = 0; /* midnight rollover */
+    hist_append(day_num(prev), todayCount); /* midnight rollover */
+    todayCount = 0;
     persist();
   }
+  if (onChange) onChange();
 }
+
+int pomodoro_get_history(PomoDay *out, int maxN) {
+  int n = min(nHist, maxN);
+  memcpy(out, hist + (nHist - n), n * sizeof(PomoDay));
+  return n;
+}
+
+int pomodoro_today_count() { return todayCount; }
+uint16_t pomodoro_today_daynum() { return today[0] ? day_num(today) : 0; }
+void pomodoro_set_on_change(void (*cb)()) { onChange = cb; }
 
 /* ---------------------------------------------------------------- render */
 static void render() {
@@ -140,6 +200,7 @@ static void session_end() {
     todayCount++;
     setIdx++;
     persist();
+    if (onChange) onChange();
     longBreak = (setIdx >= 4);
     phase = PH_BREAK;
     paused = false; /* break auto-starts */
@@ -189,6 +250,7 @@ static void reset_cb(lv_event_t *) {
 /* ---------------------------------------------------------------- build */
 void pomodoro_create(lv_obj_t *tile) {
   prefs.begin("pomo", false);
+  hist_load();
   todayCount = 0; /* until the companion tells us the date */
 
   lv_obj_clear_flag(tile, LV_OBJ_FLAG_SCROLLABLE);

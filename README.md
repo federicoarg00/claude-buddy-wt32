@@ -101,6 +101,14 @@ cada 4 pomodoros (los 4 puntos indican la posición en el set).
 - "ciclos hoy" se persiste en NVS y se resetea a medianoche (fecha del companion).
 - El timer sigue corriendo aunque estés mirando a Clawd.
 
+## Calendario de pomodoros (tercera pantalla)
+
+Desde el pomodoro, deslizá otra vez a la izquierda: calendario de los **últimos
+30 días** (columnas L-D, hoy con borde) con código de colores por ciclos
+completados — **verde >10 · amarillo 5-10 · rojo 1-4 · gris sin datos** — y
+panel de estadísticas (total, promedio/día, mejor día, hoy). El historial se
+acumula en la flash desde el día que instalaste esta versión.
+
 ## Estados de Clawd
 
 | Estado | Cuándo | Animación |
