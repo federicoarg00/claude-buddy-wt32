@@ -92,6 +92,9 @@ void wifimgr_init() {
 
 /* ---------------------------------------------------------------- connect */
 bool wifimgr_connect(uint32_t perTryMs) {
+  /* Best-RSSI pick among all known networks. Which network can reach the
+   * companion doesn't matter here: the firmware tries every COMPANION_URLS
+   * entry and falls back to direct mode anyway. */
   WiFiMulti m;
   m.addAP(WIFI_SSID, WIFI_PASS);
 #define X(ssid, pass) m.addAP(ssid, pass);

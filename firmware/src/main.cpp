@@ -19,6 +19,11 @@
 #ifndef TZ_OFFSET_SECONDS
 #define TZ_OFFSET_SECONDS (-3 * 3600) /* Argentina */
 #endif
+/* Companion may live at different addresses depending on which network the
+ * buddy joined; every entry is tried in order each poll cycle. */
+#ifndef COMPANION_URLS
+#define COMPANION_URLS X(COMPANION_URL)
+#endif
 
 static LGFX lcd;
 
@@ -60,13 +65,13 @@ static void touch_cb(lv_indev_drv_t *drv, lv_indev_data_t *data) {
 }
 
 /* ---------------------------------------------------------------- net */
-static bool fetch_status(BuddyData &out) {
+static bool fetch_status_url(const char *url, BuddyData &out) {
   HTTPClient http;
   http.setTimeout(4000);
   http.setConnectTimeout(2000); /* fail fast when away from home */
-  if (!http.begin(COMPANION_URL)) return false;
+  if (!http.begin(url)) return false;
   int code = http.GET();
-  Serial.printf("[net] GET %s -> %d\n", COMPANION_URL, code);
+  Serial.printf("[net] GET %s -> %d\n", url, code);
   if (code != 200) { http.end(); return false; }
   String payload = http.getString();
   http.end();
@@ -102,6 +107,13 @@ static bool fetch_status(BuddyData &out) {
   out.tokensToday = act["tokensToday"] | 0L;
   strlcpy(out.date, doc["dateLocal"] | "", sizeof(out.date));
   return true;
+}
+
+static bool fetch_status(BuddyData &out) {
+#define X(url) if (fetch_status_url(url, out)) return true;
+  COMPANION_URLS
+#undef X
+  return false;
 }
 
 static void prov_server_start();

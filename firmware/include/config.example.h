@@ -18,10 +18,14 @@
 #define PORTAL_AP_SSID "ClaudeBuddy-Setup"
 #define PORTAL_AP_PASS "clawd123"
 
-/* URL of the companion server running on your PC (companion/server.js).
- * Use the PC's IP on the SAME network the display's WiFi joins
- * (here that's the Wi-Fi adapter, not Ethernet — they're different subnets). */
+/* URL of the companion server running on your PC (companion/server.js). */
 #define COMPANION_URL "http://192.168.100.46:8787/status"
+
+/* If the PC can be reached at different IPs depending on the network the
+ * buddy joins, list them all — each poll tries them in order. */
+#define COMPANION_URLS \
+  X(COMPANION_URL) \
+  /* X("http://192.168.68.50:8787/status") */
 
 /* How often to poll the companion, in milliseconds. */
 #define POLL_INTERVAL_MS 15000
