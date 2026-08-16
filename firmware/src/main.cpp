@@ -38,10 +38,15 @@ static SemaphoreHandle_t dataMutex;
 static BuddyData gData;
 static ConnState gConn = CONN_BOOTING;
 
-/* Receives tokens from provision/provision.js. Shares port 80 with the WiFi
- * portal but they never run at the same time (net_task stops this one first). */
+/* Always-on LAN server: receives provisioning tokens (POST /token) and
+ * pushed status from the companion (POST /status) — the push path lets a
+ * companion on another subnet feed the buddy even when the buddy can't
+ * reach it. Shares port 80 with the WiFi portal but they never run at the
+ * same time (net_task stops this one first). */
 static WebServer provServer(80);
 static volatile bool provServerUp = false;
+static volatile bool gPushSeen = false;
+static volatile uint32_t gLastPushMs = 0;
 
 static void flush_cb(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color_p) {
   int32_t w = area->x2 - area->x1 + 1;
@@ -65,17 +70,7 @@ static void touch_cb(lv_indev_drv_t *drv, lv_indev_data_t *data) {
 }
 
 /* ---------------------------------------------------------------- net */
-static bool fetch_status_url(const char *url, BuddyData &out) {
-  HTTPClient http;
-  http.setTimeout(4000);
-  http.setConnectTimeout(2000); /* fail fast when away from home */
-  if (!http.begin(url)) return false;
-  int code = http.GET();
-  Serial.printf("[net] GET %s -> %d\n", url, code);
-  if (code != 200) { http.end(); return false; }
-  String payload = http.getString();
-  http.end();
-
+static bool parse_status_payload(const String &payload, BuddyData &out) {
   JsonDocument doc;
   DeserializationError err = deserializeJson(doc, payload);
   if (err) {
@@ -107,6 +102,19 @@ static bool fetch_status_url(const char *url, BuddyData &out) {
   out.tokensToday = act["tokensToday"] | 0L;
   strlcpy(out.date, doc["dateLocal"] | "", sizeof(out.date));
   return true;
+}
+
+static bool fetch_status_url(const char *url, BuddyData &out) {
+  HTTPClient http;
+  http.setTimeout(4000);
+  http.setConnectTimeout(2000); /* fail fast when away from home */
+  if (!http.begin(url)) return false;
+  int code = http.GET();
+  Serial.printf("[net] GET %s -> %d\n", url, code);
+  if (code != 200) { http.end(); return false; }
+  String payload = http.getString();
+  http.end();
+  return parse_status_payload(payload, out);
 }
 
 static bool fetch_status(BuddyData &out) {
@@ -168,9 +176,15 @@ static void net_task(void *arg) {
       Serial.printf("[net] wifi OK ssid=%s ip=%s rssi=%d\n",
                     WiFi.SSID().c_str(), WiFi.localIP().toString().c_str(), WiFi.RSSI());
     }
-    /* the lwIP stack exists only once WiFi is up — start the provisioning
-     * endpoint here, never in setup() */
-    if (!provServerUp && !directapi_has_token()) prov_server_start();
+    /* the lwIP stack exists only once WiFi is up — start the LAN endpoints
+     * here, never in setup() */
+    if (!provServerUp) prov_server_start();
+
+    /* companion pushes are fresher than anything we could pull */
+    if (gPushSeen && millis() - gLastPushMs < 45000) {
+      vTaskDelay(pdMS_TO_TICKS(5000));
+      continue;
+    }
 
     /* companion first (rich data at home), direct API as fallback anywhere */
     BuddyData fresh;
@@ -211,9 +225,23 @@ static void prov_server_start() {
     directapi_store_tokens(at, rt, doc["expiresAt"] | 0LL, doc["plan"] | "");
     provServer.send(200, "application/json", "{\"ok\":true}");
   });
+  provServer.on("/status", HTTP_POST, []() {
+    BuddyData fresh;
+    if (!parse_status_payload(provServer.arg("plain"), fresh)) {
+      provServer.send(400, "application/json", "{\"ok\":false}");
+      return;
+    }
+    xSemaphoreTake(dataMutex, portMAX_DELAY);
+    gData = fresh;
+    gConn = CONN_OK;
+    xSemaphoreGive(dataMutex);
+    gLastPushMs = millis();
+    gPushSeen = true;
+    provServer.send(200, "application/json", "{\"ok\":true}");
+  });
   provServer.begin();
   provServerUp = true;
-  Serial.println("[prov] token endpoint listening on :80");
+  Serial.println("[prov] LAN endpoints /token /status listening on :80");
 }
 
 /* ---------------------------------------------------------------- arduino */
@@ -263,16 +291,18 @@ void loop() {
   if (Serial.available() && Serial.read() == 'p') wifimgr_request_portal();
   if (provServerUp) {
     provServer.handleClient();
-    if (directapi_has_token()) { /* provisioning done, close the door */
-      provServer.stop();
-      provServerUp = false;
-      ui_set_provision_hint(nullptr);
-    } else if (WiFi.status() == WL_CONNECTED) {
+    /* provisioning hint only while there is no OAuth token yet */
+    static bool hintShown = false;
+    if (!directapi_has_token() && WiFi.status() == WL_CONNECTED) {
       static uint32_t lastHint = 0;
       if (millis() - lastHint > 2000) {
         lastHint = millis();
         ui_set_provision_hint(WiFi.localIP().toString().c_str());
+        hintShown = true;
       }
+    } else if (hintShown) {
+      hintShown = false;
+      ui_set_provision_hint(nullptr);
     }
   }
   if (millis() - lastUiPush > 500) {

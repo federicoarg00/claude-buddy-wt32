@@ -291,26 +291,61 @@ function refreshActivity() {
   };
 }
 
+// ---------------------------------------------------------------- status
+function buildStatus() {
+  refreshActivity(); // cheap, keeps "working" fresh
+  const now = Date.now();
+  const fresh = lastGoodAt > 0 && now - lastGoodAt < STALE_MS;
+  return {
+    ...snapshot,
+    ok: fresh,
+    error: fresh ? null : lastError || snapshot.error,
+    staleSec: lastGoodAt ? Math.round((now - lastGoodAt) / 1000) : null,
+    dateLocal: new Date().toLocaleDateString('sv'), // YYYY-MM-DD, for daily counters on the display
+    lastError,
+    limits: snapshot.limits.map((l) => ({
+      ...l,
+      resetsInSec: l.resetsAt ? Math.max(0, Math.round((Date.parse(l.resetsAt) - now) / 1000)) : null,
+    })),
+  };
+}
+
+/**
+ * Push the status to the display(s). The buddy may sit on a sibling subnet
+ * it can't reach us FROM (cascaded home routers), but we can reach IT — so
+ * the companion delivers instead of waiting to be polled.
+ * Comma-separated override: BUDDY_PUSH=http://192.168.68.63/status,...
+ */
+const PUSH_TARGETS = (process.env.BUDDY_PUSH ||
+  'http://192.168.68.63/status,http://192.168.100.116/status')
+  .split(',').map((s) => s.trim()).filter(Boolean);
+const pushOk = new Map();
+
+async function pushToBuddies() {
+  const body = JSON.stringify(buildStatus());
+  for (const url of PUSH_TARGETS) {
+    try {
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+        signal: AbortSignal.timeout(4000),
+      });
+      if (r.ok && pushOk.get(url) !== true) console.log(`[push] delivering to ${url}`);
+      pushOk.set(url, r.ok);
+    } catch {
+      if (pushOk.get(url) === true) console.log(`[push] lost ${url}`);
+      pushOk.set(url, false);
+    }
+  }
+}
+setInterval(pushToBuddies, 15_000);
+
 // ---------------------------------------------------------------- server
 const server = http.createServer((req, res) => {
   if (req.url === '/status') {
-    refreshActivity(); // cheap, do it per-request so "working" is fresh
-    const now = Date.now();
-    const fresh = lastGoodAt > 0 && now - lastGoodAt < STALE_MS;
-    const out = {
-      ...snapshot,
-      ok: fresh,
-      error: fresh ? null : lastError || snapshot.error,
-      staleSec: lastGoodAt ? Math.round((now - lastGoodAt) / 1000) : null,
-      dateLocal: new Date().toLocaleDateString('sv'), // YYYY-MM-DD, for daily counters on the display
-      lastError,
-      limits: snapshot.limits.map((l) => ({
-        ...l,
-        resetsInSec: l.resetsAt ? Math.max(0, Math.round((Date.parse(l.resetsAt) - now) / 1000)) : null,
-      })),
-    };
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-    res.end(JSON.stringify(out));
+    res.end(JSON.stringify(buildStatus()));
   } else if (req.url === '/') {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('claude-buddy companion. GET /status for JSON.\n');

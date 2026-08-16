@@ -379,8 +379,8 @@ void ui_update(ConnState conn, const BuddyData &d) {
   else if (conn == CONN_BOOTING) s = ST_BOOT;
   else if (maxPct >= 100) s = ST_CAPPED;
   else if (d.active) s = ST_WORK;
-  else if (d.lastActivityAgoSec < 0 || d.lastActivityAgoSec > 1800) s = ST_SLEEP;
-  else s = ST_IDLE;
+  else if (d.lastActivityAgoSec > 1800) s = ST_SLEEP;
+  else s = ST_IDLE; /* includes "activity unknown" (-1): assume awake, not asleep */
   apply_state(s);
 
   /* sweat drop when close to a limit (but still alive) */
