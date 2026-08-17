@@ -17,3 +17,4 @@ int pomodoro_get_history(PomoDay *out, int maxN); /* past days, oldest first */
 int pomodoro_today_count();
 uint16_t pomodoro_today_daynum();                 /* 0 = date not known yet */
 void pomodoro_set_on_change(void (*cb)());        /* count/date changed */
+void pomodoro_debug_dump();                       /* print NVS state to serial */

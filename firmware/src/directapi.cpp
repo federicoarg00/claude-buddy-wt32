@@ -9,6 +9,11 @@
 #include <Preferences.h>
 #include <time.h>
 #include "certs.h"
+#include "config.h"
+
+#ifndef TZ_OFFSET_SECONDS
+#define TZ_OFFSET_SECONDS (-3 * 3600)
+#endif
 
 static const char *USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 static const char *TOKEN_URL = "https://console.anthropic.com/v1/oauth/token";
@@ -170,11 +175,14 @@ bool directapi_fetch(BuddyData &out) {
   out.activeSessions = 0;
   out.tokensToday = -1; /* unavailable without the companion */
 
-  /* local date for the pomodoro daily counter (TZ offset applied by configTime) */
-  struct tm lt;
-  if (getLocalTime(&lt, 10)) {
-    snprintf(out.date, sizeof(out.date), "%04d-%02d-%02d",
-             lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday);
-  }
+  /* Local date for the pomodoro daily counter. Apply the offset by hand on
+   * the UTC epoch instead of trusting the TZ environment: a date that leaks
+   * UTC here after ~21:00 ART looks like "tomorrow" and used to trigger a
+   * spurious midnight rollover that zeroed the day's cycle count. */
+  time_t lt = time(nullptr) + TZ_OFFSET_SECONDS;
+  struct tm tmv;
+  gmtime_r(&lt, &tmv);
+  snprintf(out.date, sizeof(out.date), "%04d-%02d-%02d",
+           tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday);
   return true;
 }

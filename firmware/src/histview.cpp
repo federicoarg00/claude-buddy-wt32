@@ -75,10 +75,11 @@ void histview_refresh() {
 
     int count = 0;
     bool hasData = false;
-    if (d == today) { count = pomodoro_today_count(); hasData = true; }
-    else {
-      for (int j = 0; j < nHist; j++)
-        if (hist[j].day == d) { count = hist[j].count; hasData = true; break; }
+    for (int j = 0; j < nHist; j++)
+      if (hist[j].day == d) { count = hist[j].count; hasData = true; break; }
+    if (d == today) { /* live count wins, but never below an archived value */
+      count = max(count, pomodoro_today_count());
+      hasData = true;
     }
 
     if (hasData) { total += count; daysWithData++; best = max(best, count); }

@@ -288,7 +288,11 @@ void loop() {
   static uint32_t lastUiPush = 0;
   lv_timer_handler();
   wifimgr_handle();
-  if (Serial.available() && Serial.read() == 'p') wifimgr_request_portal();
+  if (Serial.available()) {
+    char c = Serial.read();
+    if (c == 'p') wifimgr_request_portal();
+    else if (c == 'd') pomodoro_debug_dump();
+  }
   if (provServerUp) {
     provServer.handleClient();
     /* provisioning hint only while there is no OAuth token yet */

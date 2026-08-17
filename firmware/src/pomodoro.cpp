@@ -83,29 +83,50 @@ static void hist_append(uint16_t day, uint16_t count) {
   hist_save();
 }
 
+/* If a (possibly spurious) rollover archived cycles under this same day,
+ * take them back so no completed pomodoro is ever lost. */
+static void restore_from_hist(uint16_t day) {
+  for (int i = 0; i < nHist; i++) {
+    if (hist[i].day == day && hist[i].count > todayCount) {
+      todayCount = hist[i].count;
+      persist();
+    }
+  }
+}
+
 void pomodoro_set_date(const char *dateLocal) {
   if (!dateLocal || !dateLocal[0]) return;
-  if (strcmp(today, dateLocal) == 0) return;
-  bool firstSync = (today[0] == 0);
-  char prev[12];
-  strlcpy(prev, today, sizeof(prev));
+  uint16_t newDay = day_num(dateLocal);
+  if (!newDay) return;
+  uint16_t curDay = today[0] ? day_num(today) : 0;
+
+  if (curDay == newDay) { /* same civil day, maybe formatted differently */
+    strlcpy(today, dateLocal, sizeof(today));
+    return;
+  }
+  /* a date that moves BACKWARDS is a clock/source glitch, never midnight */
+  if (curDay && newDay < curDay) return;
+
+  bool firstSync = (curDay == 0);
   strlcpy(today, dateLocal, sizeof(today));
   if (firstSync) {
     /* boot: keep the persisted count if it's from the same day; if the
      * device slept past midnight, archive the stale day into history */
     String saved = prefs.getString("date", "");
-    if (saved == today) {
+    uint16_t savedDay = saved.length() ? day_num(saved.c_str()) : 0;
+    if (savedDay == newDay) {
       todayCount = prefs.getInt("count", 0);
     } else {
-      if (saved.length()) hist_append(day_num(saved.c_str()), prefs.getInt("count", 0));
+      hist_append(savedDay, prefs.getInt("count", 0));
       todayCount = 0;
       persist();
     }
   } else {
-    hist_append(day_num(prev), todayCount); /* midnight rollover */
+    hist_append(curDay, todayCount); /* midnight rollover */
     todayCount = 0;
     persist();
   }
+  restore_from_hist(newDay);
   if (onChange) onChange();
 }
 
@@ -118,6 +139,15 @@ int pomodoro_get_history(PomoDay *out, int maxN) {
 int pomodoro_today_count() { return todayCount; }
 uint16_t pomodoro_today_daynum() { return today[0] ? day_num(today) : 0; }
 void pomodoro_set_on_change(void (*cb)()) { onChange = cb; }
+
+void pomodoro_debug_dump() {
+  Serial.printf("[pomo] RAM: today='%s' (day %u) count=%d | NVS: date='%s' count=%d\n",
+                today, pomodoro_today_daynum(), todayCount,
+                prefs.getString("date", "").c_str(), prefs.getInt("count", -1));
+  Serial.printf("[pomo] hist (%d entries):\n", nHist);
+  for (int i = 0; i < nHist; i++)
+    Serial.printf("[pomo]   day %u -> %u cycles\n", hist[i].day, hist[i].count);
+}
 
 /* ---------------------------------------------------------------- render */
 static void render() {
