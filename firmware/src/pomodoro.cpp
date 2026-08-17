@@ -30,6 +30,7 @@ static uint32_t lastMs = 0;
 static int setIdx = 0;           /* focus sessions completed in current set, 0..4 */
 static int todayCount = 0;
 static char today[12] = "";
+static uint32_t lastActiveMs = 0; /* for the screen-sleep logic */
 
 static Preferences prefs;
 
@@ -244,11 +245,14 @@ static void session_end() {
   render();
 }
 
+uint32_t pomodoro_idle_ms() { return millis() - lastActiveMs; }
+
 static void tick_cb(lv_timer_t *) {
   uint32_t now = millis();
   uint32_t dt = now - lastMs;
   lastMs = now;
   if ((phase == PH_FOCUS || phase == PH_BREAK) && !paused) {
+    lastActiveMs = now;
     if (remainMs <= dt) { session_end(); return; }
     remainMs -= dt;
     render();
@@ -257,12 +261,14 @@ static void tick_cb(lv_timer_t *) {
 
 /* ---------------------------------------------------------------- input */
 static void center_tap_cb(lv_event_t *) {
+  lastActiveMs = millis();
   if (phase == PH_IDLE) { phase = PH_FOCUS; paused = false; }
   else paused = !paused;
   render();
 }
 
 static void skip_cb(lv_event_t *) {
+  lastActiveMs = millis();
   if (phase == PH_FOCUS) load_focus();       /* abandon focus, no count */
   else if (phase == PH_BREAK) {              /* cut the break short */
     if (longBreak) { setIdx = 0; longBreak = false; }
@@ -272,6 +278,7 @@ static void skip_cb(lv_event_t *) {
 }
 
 static void reset_cb(lv_event_t *) {
+  lastActiveMs = millis();
   remainMs = durMs;
   if (phase != PH_IDLE) paused = true;
   render();

@@ -58,13 +58,23 @@ static void flush_cb(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *col
   lv_disp_flush_ready(disp);
 }
 
+/* screen sleep: backlight off while nothing is happening, wake on touch or
+ * Claude activity */
+static volatile bool screenOff = false;
+static volatile uint32_t lastTouchMs = 0;
+static const uint32_t SCREEN_SLEEP_IDLE_MS = 30UL * 60 * 1000; /* pomodoro idle */
+static const uint32_t TOUCH_WAKE_HOLD_MS = 2UL * 60 * 1000;    /* stay on after a touch */
+
 static void touch_cb(lv_indev_drv_t *drv, lv_indev_data_t *data) {
   uint16_t x, y;
-  if (lcd.getTouch(&x, &y)) {
+  bool pressed = lcd.getTouch(&x, &y);
+  if (pressed) lastTouchMs = millis();
+  if (pressed && !screenOff) {
     data->state = LV_INDEV_STATE_PR;
     data->point.x = x;
     data->point.y = y;
   } else {
+    /* while asleep the first touch only wakes: swallow it */
     data->state = LV_INDEV_STATE_REL;
   }
 }
@@ -293,6 +303,11 @@ void loop() {
     char c = Serial.read();
     if (c == 'p') wifimgr_request_portal();
     else if (c == 'd') pomodoro_debug_dump();
+    else if (c == 'z') { /* test: force the screen off; touch/activity wakes it */
+      screenOff = true;
+      lcd.setBrightness(0);
+      Serial.println("[screen] forced sleep (test)");
+    }
   }
   if (provServerUp) {
     provServer.handleClient();
@@ -320,6 +335,22 @@ void loop() {
     xSemaphoreGive(dataMutex);
     ui_update(conn, copy);
     if (copy.date[0]) pomodoro_set_date(copy.date);
+
+    /* --- screen sleep --- */
+    int maxPct = -1;
+    for (int i = 0; i < copy.nLimits; i++) maxPct = max(maxPct, copy.limits[i].pct);
+    bool claudeAsleep = conn == CONN_OK && copy.companionOk &&
+                        !copy.active && copy.lastActivityAgoSec > 1800;
+    bool shouldSleep = claudeAsleep &&
+                       maxPct < 100 &&
+                       pomodoro_idle_ms() > SCREEN_SLEEP_IDLE_MS &&
+                       (lastTouchMs == 0 || millis() - lastTouchMs > TOUCH_WAKE_HOLD_MS) &&
+                       !wifimgr_portal_active();
+    if (shouldSleep != screenOff) {
+      screenOff = shouldSleep;
+      lcd.setBrightness(screenOff ? 0 : BACKLIGHT_LEVEL);
+      Serial.printf("[screen] %s\n", screenOff ? "sleep" : "wake");
+    }
   }
   delay(5);
 }
