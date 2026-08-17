@@ -172,9 +172,10 @@ static void net_task(void *arg) {
     }
     if (!timeStarted) {
       timeStarted = true;
-      configTime(TZ_OFFSET_SECONDS, 0, "pool.ntp.org", "time.google.com");
+      configTime(0, 0, "pool.ntp.org", "time.google.com"); /* clock in UTC; offsets applied manually */
       Serial.printf("[net] wifi OK ssid=%s ip=%s rssi=%d\n",
                     WiFi.SSID().c_str(), WiFi.localIP().toString().c_str(), WiFi.RSSI());
+      directapi_tz_sync(); /* the buddy travels: re-detect the timezone on every new connection */
     }
     /* the lwIP stack exists only once WiFi is up — start the LAN endpoints
      * here, never in setup() */

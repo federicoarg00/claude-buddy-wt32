@@ -12,8 +12,13 @@
 #include "config.h"
 
 #ifndef TZ_OFFSET_SECONDS
-#define TZ_OFFSET_SECONDS (-3 * 3600)
+#define TZ_OFFSET_SECONDS (-5 * 3600) /* last-resort fallback only: the real
+                                       * offset is detected via IP at boot */
 #endif
+
+static long tzOffsetSec = TZ_OFFSET_SECONDS;
+
+long directapi_tz_offset() { return tzOffsetSec; }
 
 static const char *USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 static const char *TOKEN_URL = "https://console.anthropic.com/v1/oauth/token";
@@ -37,6 +42,41 @@ void directapi_init() {
   refreshToken = prefs.getString("rt", "");
   expiresAtMs = prefs.getLong64("exp", 0);
   planName = prefs.getString("plan", "");
+  tzOffsetSec = prefs.getLong("tz", TZ_OFFSET_SECONDS);
+}
+
+/* IP-geolocated timezone: worldtimeapi first, ip-api as fallback (both are
+ * keyless; plain HTTP is fine — the offset is not sensitive data). */
+void directapi_tz_sync() {
+  long off = LONG_MIN;
+  HTTPClient http;
+  http.setTimeout(6000);
+  if (http.begin("http://worldtimeapi.org/api/ip")) {
+    if (http.GET() == 200) {
+      JsonDocument d;
+      if (!deserializeJson(d, http.getString()) && !d["raw_offset"].isNull())
+        off = (long)d["raw_offset"] + (long)(d["dst_offset"] | 0);
+    }
+    http.end();
+  }
+  if (off == LONG_MIN && http.begin("http://ip-api.com/json/?fields=offset")) {
+    if (http.GET() == 200) {
+      JsonDocument d;
+      if (!deserializeJson(d, http.getString()) && !d["offset"].isNull())
+        off = (long)d["offset"];
+    }
+    http.end();
+  }
+  if (off != LONG_MIN && off >= -14L * 3600 && off <= 14L * 3600) {
+    if (off != tzOffsetSec)
+      Serial.printf("[tz] timezone changed: UTC%+ld (was UTC%+ld)\n", off / 3600, tzOffsetSec / 3600);
+    else
+      Serial.printf("[tz] timezone confirmed: UTC%+ld\n", off / 3600);
+    tzOffsetSec = off;
+    prefs.putLong("tz", off);
+  } else {
+    Serial.printf("[tz] detection failed, keeping UTC%+ld\n", tzOffsetSec / 3600);
+  }
 }
 
 bool directapi_has_token() { return refreshToken.length() > 0; }
@@ -175,11 +215,11 @@ bool directapi_fetch(BuddyData &out) {
   out.activeSessions = 0;
   out.tokensToday = -1; /* unavailable without the companion */
 
-  /* Local date for the pomodoro daily counter. Apply the offset by hand on
-   * the UTC epoch instead of trusting the TZ environment: a date that leaks
-   * UTC here after ~21:00 ART looks like "tomorrow" and used to trigger a
-   * spurious midnight rollover that zeroed the day's cycle count. */
-  time_t lt = time(nullptr) + TZ_OFFSET_SECONDS;
+  /* Local date for the pomodoro daily counter. Apply the detected offset by
+   * hand on the UTC epoch instead of trusting the TZ environment: a date
+   * that leaks UTC (or a hardcoded wrong zone) looks like "tomorrow" at
+   * night and used to trigger a spurious rollover that zeroed the count. */
+  time_t lt = time(nullptr) + tzOffsetSec;
   struct tm tmv;
   gmtime_r(&lt, &tmv);
   snprintf(out.date, sizeof(out.date), "%04d-%02d-%02d",

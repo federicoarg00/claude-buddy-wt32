@@ -10,8 +10,10 @@
   /* X("WIFI_TRABAJO", "password") */ \
   /* X("HotspotCelu", "password") */
 
-/* Local timezone offset for the pomodoro daily counter in direct mode. */
-#define TZ_OFFSET_SECONDS (-3 * 3600) /* Argentina */
+/* Timezone fallback ONLY: on every WiFi connection the buddy detects its
+ * real offset via IP geolocation (worldtimeapi.org / ip-api.com) and
+ * persists it. This value is used just until the first detection works. */
+#define TZ_OFFSET_SECONDS (-5 * 3600) /* Panama */
 
 /* WiFi config portal (long-press Clawd, or automatic when no known network
  * is found). The AP password is shown on the display. */

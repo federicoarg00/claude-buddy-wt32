@@ -13,3 +13,8 @@ void directapi_store_tokens(const char *access, const char *refresh,
  * Applies its own 429 backoff: call directapi_wait_ms() for the next delay. */
 bool directapi_fetch(BuddyData &out);
 uint32_t directapi_wait_ms();
+
+/* Detect the local timezone offset from the network (IP geolocation) and
+ * persist it. Call after every WiFi (re)connection — the buddy travels. */
+void directapi_tz_sync();
+long directapi_tz_offset();
