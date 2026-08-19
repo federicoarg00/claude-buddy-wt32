@@ -15,10 +15,10 @@
  * persists it. This value is used just until the first detection works. */
 #define TZ_OFFSET_SECONDS (-5 * 3600) /* Panama */
 
-/* WiFi config portal (long-press Clawd, or automatic when no known network
+/* WiFi config portal (long-press Claudito, or automatic when no known network
  * is found). The AP password is shown on the display. */
 #define PORTAL_AP_SSID "ClaudeBuddy-Setup"
-#define PORTAL_AP_PASS "clawd123"
+#define PORTAL_AP_PASS "claudito123"
 
 /* URL of the companion server running on your PC (companion/server.js). */
 #define COMPANION_URL "http://192.168.100.46:8787/status"

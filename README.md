@@ -1,6 +1,6 @@
 # Claude Buddy — WT32-SC01
 
-Un compañero físico para Claude Code: **Clawd** (la mascota pixel de Claude) vive en una
+Un compañero físico para Claude Code: **Claudito** (la mascota pixel de Claude) vive en una
 pantalla WT32-SC01 de 3.5" y muestra en tiempo real la actividad de tus sesiones y los
 límites de uso del Plan (ventana de 5 h, semanal y por modelo — lo mismo que `/usage`).
 
@@ -18,7 +18,7 @@ límites de uso del Plan (ventana de 5 h, semanal y por modelo — lo mismo que 
 └──────────────────────────────────────────────┘
 ```
 
-Clawd reacciona: parpadea y respira en idle, rebota mientras hay una sesión activa,
+Claudito reacciona: parpadea y respira en idle, rebota mientras hay una sesión activa,
 duerme (`z z z`) tras 30 min sin actividad, suda cerca del límite (≥85 %) y se apaga
 gris con la boca larga cuando un límite llega al 100 %.
 
@@ -99,7 +99,7 @@ cada 4 pomodoros (los 4 puntos indican la posición en el set).
 - El descanso arranca solo al terminar el foco; el próximo foco espera tu tap.
 - Al terminar una sesión la pantalla parpadea y salta a la vista del pomodoro.
 - "ciclos hoy" se persiste en NVS y se resetea a medianoche (fecha del companion).
-- El timer sigue corriendo aunque estés mirando a Clawd.
+- El timer sigue corriendo aunque estés mirando a Claudito.
 
 ## Calendario de pomodoros (tercera pantalla)
 
@@ -109,7 +109,7 @@ completados — **verde >10 · amarillo 5-10 · rojo 1-4 · gris sin datos** —
 panel de estadísticas (total, promedio/día, mejor día, hoy). El historial se
 acumula en la flash desde el día que instalaste esta versión.
 
-## Estados de Clawd
+## Estados de Claudito
 
 | Estado | Cuándo | Animación |
 |---|---|---|

@@ -44,5 +44,5 @@ void ui_show_pomodoro_tile();
 void ui_set_provision_hint(const char *ip);
 /* Free-form hint under the status label (portal instructions etc). */
 void ui_set_hint_text(const char *text);
-/* Long-press on Clawd's body (e.g. to open the WiFi portal). */
+/* Long-press on Claudito's body (e.g. to open the WiFi portal). */
 void ui_on_body_longpress(void (*cb)(void));

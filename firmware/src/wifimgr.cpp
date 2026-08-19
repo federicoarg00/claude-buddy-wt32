@@ -16,7 +16,7 @@
 #define PORTAL_AP_SSID "ClaudeBuddy-Setup"
 #endif
 #ifndef PORTAL_AP_PASS
-#define PORTAL_AP_PASS "clawd123"
+#define PORTAL_AP_PASS "claudito123"
 #endif
 #ifndef WIFI_EXTRA_NETWORKS
 #define WIFI_EXTRA_NETWORKS

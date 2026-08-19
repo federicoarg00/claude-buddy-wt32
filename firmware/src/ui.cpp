@@ -1,4 +1,4 @@
-/* Claude Buddy UI: Clawd (pixel-style mascot) + plan usage limit bars.
+/* Claude Buddy UI: Claudito (pixel-style mascot) + plan usage limit bars.
  * Screen is 480x320 landscape. */
 #include "ui.h"
 #include "pomodoro.h"
@@ -170,7 +170,7 @@ void ui_init() {
   lv_label_set_text(planLbl, "...");
   lv_obj_center(planLbl);
 
-  /* Clawd */
+  /* Claudito */
   body = lv_obj_create(scr);
   lv_obj_set_size(body, 150, 122);
   lv_obj_set_style_radius(body, 30, 0);
