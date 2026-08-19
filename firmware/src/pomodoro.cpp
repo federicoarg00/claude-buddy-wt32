@@ -84,6 +84,8 @@ static void hist_append(uint16_t day, uint16_t count) {
   hist_save();
 }
 
+static void render();
+
 /* If a (possibly spurious) rollover archived cycles under this same day,
  * take them back so no completed pomodoro is ever lost. */
 static void restore_from_hist(uint16_t day) {
@@ -110,6 +112,10 @@ void pomodoro_set_date(const char *dateLocal) {
 
   bool firstSync = (curDay == 0);
   strlcpy(today, dateLocal, sizeof(today));
+  /* a new day starts a fresh set of 4: yesterday's progress toward the
+   * long break must not leak into today */
+  setIdx = 0;
+  longBreak = false;
   if (firstSync) {
     /* boot: keep the persisted count if it's from the same day; if the
      * device slept past midnight, archive the stale day into history */
@@ -128,6 +134,7 @@ void pomodoro_set_date(const char *dateLocal) {
     persist();
   }
   restore_from_hist(newDay);
+  render(); /* set dots + daily counter changed */
   if (onChange) onChange();
 }
 
