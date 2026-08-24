@@ -30,6 +30,8 @@ static uint32_t lastMs = 0;
 static int setIdx = 0;           /* focus sessions completed in current set, 0..4 */
 static int todayCount = 0;
 static char today[12] = "";
+static bool provisional = false; /* today = last saved date, not yet confirmed by the network */
+static int provisionalBase = 0;  /* count that already belonged to that saved date */
 static uint32_t lastActiveMs = 0; /* for the screen-sleep logic */
 
 static Preferences prefs;
@@ -103,10 +105,30 @@ void pomodoro_set_date(const char *dateLocal) {
   if (!newDay) return;
   uint16_t curDay = today[0] ? day_num(today) : 0;
 
-  if (curDay == newDay) { /* same civil day, maybe formatted differently */
+  if (curDay == newDay) { /* same civil day: the guess (if any) is confirmed */
     strlcpy(today, dateLocal, sizeof(today));
+    provisional = false;
     return;
   }
+
+  if (provisional && curDay) {
+    /* Boot adopted the last saved date as a guess; the network date is
+     * authoritative. What was already saved belongs to the old day; cycles
+     * completed during this offline run are credited to the real today —
+     * never discarded. */
+    hist_append(curDay, provisionalBase);
+    todayCount = max(0, todayCount - provisionalBase);
+    strlcpy(today, dateLocal, sizeof(today));
+    provisional = false;
+    setIdx = 0;
+    longBreak = false;
+    persist();
+    restore_from_hist(newDay);
+    render();
+    if (onChange) onChange();
+    return;
+  }
+
   /* a date that moves BACKWARDS is a clock/source glitch, never midnight */
   if (curDay && newDay < curDay) return;
 
@@ -117,12 +139,15 @@ void pomodoro_set_date(const char *dateLocal) {
   setIdx = 0;
   longBreak = false;
   if (firstSync) {
-    /* boot: keep the persisted count if it's from the same day; if the
-     * device slept past midnight, archive the stale day into history */
+    /* fresh device or legacy empty-date save */
     String saved = prefs.getString("date", "");
     uint16_t savedDay = saved.length() ? day_num(saved.c_str()) : 0;
     if (savedDay == newDay) {
       todayCount = prefs.getInt("count", 0);
+    } else if (savedDay == 0) {
+      /* cycles counted while the date was unknown: credit them to today */
+      todayCount = max(todayCount, prefs.getInt("count", 0));
+      persist();
     } else {
       hist_append(savedDay, prefs.getInt("count", 0));
       todayCount = 0;
@@ -147,6 +172,14 @@ int pomodoro_get_history(PomoDay *out, int maxN) {
 int pomodoro_today_count() { return todayCount; }
 uint16_t pomodoro_today_daynum() { return today[0] ? day_num(today) : 0; }
 void pomodoro_set_on_change(void (*cb)()) { onChange = cb; }
+
+void pomodoro_adjust(int delta) {
+  todayCount = max(0, todayCount + delta);
+  persist();
+  render();
+  if (onChange) onChange();
+  Serial.printf("[pomo] manual adjust %+d -> today=%d\n", delta, todayCount);
+}
 
 void pomodoro_debug_dump() {
   Serial.printf("[pomo] RAM: today='%s' (day %u) count=%d | NVS: date='%s' count=%d\n",
@@ -295,7 +328,19 @@ static void reset_cb(lv_event_t *) {
 void pomodoro_create(lv_obj_t *tile) {
   prefs.begin("pomo", false);
   hist_load();
-  todayCount = 0; /* until the companion tells us the date */
+  todayCount = 0;
+  /* Adopt the last saved date as a provisional "today" so the calendar
+   * renders and cycles keep counting even with no internet (office WiFi
+   * that blocks NTP/API, travel, etc). The network date corrects it. */
+  {
+    String saved = prefs.getString("date", "");
+    if (saved.length()) {
+      strlcpy(today, saved.c_str(), sizeof(today));
+      todayCount = prefs.getInt("count", 0);
+      provisional = true;
+      provisionalBase = todayCount;
+    }
+  }
 
   lv_obj_clear_flag(tile, LV_OBJ_FLAG_SCROLLABLE);
 

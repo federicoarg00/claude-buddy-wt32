@@ -19,3 +19,4 @@ uint16_t pomodoro_today_daynum();                 /* 0 = date not known yet */
 void pomodoro_set_on_change(void (*cb)());        /* count/date changed */
 void pomodoro_debug_dump();                       /* print NVS state to serial */
 uint32_t pomodoro_idle_ms();                      /* ms since it last ran or was touched */
+void pomodoro_adjust(int delta);                  /* manual correction of today's count */

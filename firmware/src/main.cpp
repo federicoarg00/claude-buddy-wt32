@@ -303,6 +303,8 @@ void loop() {
     char c = Serial.read();
     if (c == 'p') wifimgr_request_portal();
     else if (c == 'd') pomodoro_debug_dump();
+    else if (c == '+') pomodoro_adjust(1);
+    else if (c == '-') pomodoro_adjust(-1);
     else if (c == 'z') { /* test: force the screen off; touch/activity wakes it */
       screenOff = true;
       lcd.setBrightness(0);
