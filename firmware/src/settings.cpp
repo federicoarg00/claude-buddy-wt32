@@ -47,9 +47,37 @@ static void persist_cfg() {
 }
 
 /* ---------------------------------------------------------------- wifi list */
+static void net_btn_cb(lv_event_t *e);
+
+static void mk_net_btn(int idx) { /* idx -1 = AUTO */
+  lv_obj_t *btn = lv_btn_create(netList);
+  lv_obj_set_size(btn, 204, 40);
+  lv_obj_set_style_bg_color(btn, C_CARD, 0);
+  lv_obj_set_style_radius(btn, 9, 0);
+  lv_obj_set_style_border_color(btn, C_ORANGE, 0);
+  lv_obj_set_style_border_width(btn, 0, 0);
+  lv_obj_set_user_data(btn, (void *)(intptr_t)idx);
+  lv_obj_add_event_cb(btn, net_btn_cb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t *l = lv_label_create(btn);
+  lv_obj_set_style_text_font(l, &lv_font_montserrat_12, 0);
+  lv_obj_set_style_text_color(l, C_TEXT, 0);
+  lv_obj_set_width(l, 188);
+  lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
+  lv_label_set_text(l, "");
+  lv_obj_center(l);
+}
+
 static void refresh_net_list() {
   if (!netList) return;
   String cur = WiFi.status() == WL_CONNECTED ? WiFi.SSID() : "";
+
+  /* keep one button per known network (the list is loaded after this tile
+   * is built, and can grow when the portal saves a new network) */
+  int want = wifimgr_known_count();
+  while ((int)lv_obj_get_child_cnt(netList) - 1 < want)
+    mk_net_btn((int)lv_obj_get_child_cnt(netList) - 1);
+  while ((int)lv_obj_get_child_cnt(netList) - 1 > want)
+    lv_obj_del(lv_obj_get_child(netList, lv_obj_get_child_cnt(netList) - 1));
   if (cur.length())
     lv_label_set_text_fmt(curNetLbl, "conectado: %s (%d dBm)", cur.c_str(), WiFi.RSSI());
   else
@@ -148,25 +176,7 @@ void settings_create(lv_obj_t *tile) {
   lv_obj_set_flex_flow(netList, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_scroll_dir(netList, LV_DIR_VER);
 
-  auto mk_net_btn = [](int idx) {
-    lv_obj_t *btn = lv_btn_create(netList);
-    lv_obj_set_size(btn, 204, 40);
-    lv_obj_set_style_bg_color(btn, C_CARD, 0);
-    lv_obj_set_style_radius(btn, 9, 0);
-    lv_obj_set_style_border_color(btn, C_ORANGE, 0);
-    lv_obj_set_style_border_width(btn, 0, 0);
-    lv_obj_set_user_data(btn, (void *)(intptr_t)idx);
-    lv_obj_add_event_cb(btn, net_btn_cb, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t *l = lv_label_create(btn);
-    lv_obj_set_style_text_font(l, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(l, C_TEXT, 0);
-    lv_obj_set_width(l, 188);
-    lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
-    lv_label_set_text(l, "");
-    lv_obj_center(l);
-  };
-  mk_net_btn(-1); /* AUTO */
-  for (int i = 0; i < wifimgr_known_count(); i++) mk_net_btn(i);
+  mk_net_btn(-1); /* AUTO; the network buttons are synced by refresh_net_list */
 
   /* ---- right: settings ---- */
   lv_obj_t *panel = lv_obj_create(tile);
