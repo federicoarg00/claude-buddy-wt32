@@ -3,6 +3,7 @@
 #include "ui.h"
 #include "pomodoro.h"
 #include "histview.h"
+#include "settings.h"
 #include <Arduino.h>
 
 /* ---- palette (Claude-ish warm dark) ---- */
@@ -22,7 +23,7 @@ enum BuddyState { ST_BOOT, ST_NO_WIFI, ST_NO_COMPANION, ST_SLEEP, ST_IDLE, ST_WO
 static const int EYE_H = 36;
 
 /* widgets */
-static lv_obj_t *tv, *tilePomo, *tileHist;
+static lv_obj_t *tv, *tileSettings, *tilePomo, *tileHist;
 static lv_obj_t *scr, *headerTitle, *planBadge, *planLbl, *connDot, *srcIcon;
 static lv_obj_t *body, *eyeL, *eyeR, *mouth, *zzz, *sweat, *statusLbl, *provHint;
 static lv_obj_t *footL, *footR;
@@ -134,13 +135,15 @@ static void start_zzz(bool on) {
 
 /* ---------------------------------------------------------------- build */
 void ui_init() {
-  /* three swipeable tiles: buddy | pomodoro | 30-day calendar */
+  /* four swipeable tiles: settings | buddy | pomodoro | 30-day calendar */
+  settings_init(); /* pomodoro_create below reads the configured durations */
   tv = lv_tileview_create(lv_scr_act());
   lv_obj_set_style_bg_color(tv, C_BG, 0);
   lv_obj_set_scrollbar_mode(tv, LV_SCROLLBAR_MODE_OFF);
-  scr = lv_tileview_add_tile(tv, 0, 0, LV_DIR_RIGHT);
-  tilePomo = lv_tileview_add_tile(tv, 1, 0, LV_DIR_HOR);
-  tileHist = lv_tileview_add_tile(tv, 2, 0, LV_DIR_LEFT);
+  tileSettings = lv_tileview_add_tile(tv, 0, 0, LV_DIR_RIGHT);
+  scr = lv_tileview_add_tile(tv, 1, 0, LV_DIR_HOR);
+  tilePomo = lv_tileview_add_tile(tv, 2, 0, LV_DIR_HOR);
+  tileHist = lv_tileview_add_tile(tv, 3, 0, LV_DIR_LEFT);
   lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
   /* header */
@@ -268,11 +271,13 @@ void ui_init() {
 
   pomodoro_create(tilePomo);
   histview_create(tileHist);
+  settings_create(tileSettings);
   pomodoro_set_on_change(histview_refresh);
+  lv_obj_set_tile_id(tv, 1, 0, LV_ANIM_OFF); /* start on the buddy tile */
 }
 
 void ui_show_pomodoro_tile() {
-  lv_obj_set_tile_id(tv, 1, 0, LV_ANIM_ON);
+  lv_obj_set_tile_id(tv, 2, 0, LV_ANIM_ON);
 }
 
 void ui_set_provision_hint(const char *ip) {

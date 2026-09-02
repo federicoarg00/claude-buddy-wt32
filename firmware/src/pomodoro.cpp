@@ -4,6 +4,7 @@
  * the companion's dateLocal. */
 #include "pomodoro.h"
 #include "ui.h"
+#include "settings.h"
 #include <Arduino.h>
 #include <Preferences.h>
 
@@ -15,17 +16,15 @@
 #define C_GREEN  lv_color_hex(0x8AA672)
 #define C_TRACK  lv_color_hex(0x413F3A)
 
-static const uint32_t FOCUS_MS = 25UL * 60 * 1000;
-static const uint32_t BREAK_MS = 5UL * 60 * 1000;
-static const uint32_t LONG_MS = 15UL * 60 * 1000;
+/* durations come from the settings tile (settings_focus_ms() etc.) */
 
 enum Phase { PH_IDLE, PH_FOCUS, PH_BREAK };
 
 static Phase phase = PH_IDLE;
 static bool paused = false;      /* only meaningful in FOCUS/BREAK */
 static bool longBreak = false;   /* current/last break is the long one */
-static uint32_t durMs = FOCUS_MS;
-static uint32_t remainMs = FOCUS_MS;
+static uint32_t durMs = 25UL * 60000;
+static uint32_t remainMs = 25UL * 60000;
 static uint32_t lastMs = 0;
 static int setIdx = 0;           /* focus sessions completed in current set, 0..4 */
 static int todayCount = 0;
@@ -262,8 +261,13 @@ static void alert() {
 static void load_focus() {
   phase = PH_IDLE;
   paused = false;
-  durMs = FOCUS_MS;
-  remainMs = FOCUS_MS;
+  durMs = settings_focus_ms();
+  remainMs = durMs;
+}
+
+void pomodoro_durations_changed() {
+  if (phase == PH_IDLE) { load_focus(); render(); }
+  /* a running session keeps its original duration; the new one applies next */
 }
 
 static void session_end() {
@@ -275,7 +279,7 @@ static void session_end() {
     longBreak = (setIdx >= 4);
     phase = PH_BREAK;
     paused = false; /* break auto-starts */
-    durMs = longBreak ? LONG_MS : BREAK_MS;
+    durMs = longBreak ? settings_longbreak_ms() : settings_break_ms();
     remainMs = durMs;
   } else { /* break finished */
     if (longBreak) { setIdx = 0; longBreak = false; }

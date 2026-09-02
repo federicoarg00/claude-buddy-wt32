@@ -17,3 +17,13 @@ void wifimgr_handle();                    /* call from loop(): DNS + HTTP */
 
 const char *wifimgr_ap_ssid();
 const char *wifimgr_ap_pass();
+
+/* Known-network list (compile-time + portal-saved) and manual selection.
+ * Pinning a network makes the buddy connect ONLY to it, so it can't stay
+ * trapped on a misbehaving one; -1 = automatic best-signal mode. */
+int wifimgr_known_count();
+const char *wifimgr_known_ssid(int i);
+void wifimgr_pin(int idx);            /* -1 = auto; triggers a reconnect */
+int wifimgr_pinned();
+bool wifimgr_take_reconnect();        /* consumed by net_task */
+bool wifimgr_connect_pinned(uint32_t waitMs);

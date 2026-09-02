@@ -88,6 +88,20 @@ pio run -e wt32-sc01 -t upload                 # o: python -m platformio run ...
 
 `config.h` está gitignoreado — ahí van tu SSID, contraseña y la URL del companion.
 
+## Pantalla de ajustes (deslizá a la derecha desde Claudito)
+
+Orden de pantallas: **Ajustes ⟷ Claudito ⟷ Pomodoro ⟷ Calendario**.
+
+- **WiFi**: muestra la red actual con su señal y lista todas las conocidas.
+  Tocá una para **fijarla** (Claudito se conecta solo a esa — útil cuando la
+  automática elige una red que anda mal). "AUTO" vuelve al modo mejor-señal;
+  si la red fijada falla 3 veces seguidas, vuelve a AUTO solo.
+- **Pomodoro**: duración del foco (25/30/45/50), descanso corto (5/10/15) y
+  descanso largo (15/20/30). Aplica a la próxima sesión.
+- **Apagar pantalla**: 15/30/60 min de inactividad total, o nunca.
+
+Todo persiste en la flash.
+
 ## Pomodoro
 
 Deslizá hacia la izquierda para pasar del buddy al **timer pomodoro** (y a la derecha

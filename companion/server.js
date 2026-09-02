@@ -317,7 +317,7 @@ function buildStatus() {
  * Comma-separated override: BUDDY_PUSH=http://192.168.68.63/status,...
  */
 const PUSH_TARGETS = (process.env.BUDDY_PUSH ||
-  'http://192.168.68.60/status,http://192.168.68.63/status,http://192.168.100.116/status')
+  'http://192.168.68.72/status,http://192.168.68.60/status,http://192.168.68.63/status,http://192.168.100.116/status')
   .split(',').map((s) => s.trim()).filter(Boolean);
 const pushOk = new Map();
 

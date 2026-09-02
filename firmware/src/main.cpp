@@ -13,6 +13,7 @@
 #include "pomodoro.h"
 #include "directapi.h"
 #include "wifimgr.h"
+#include "settings.h"
 #include "config.h"
 
 /* Defaults for options older config.h files don't define. */
@@ -62,7 +63,6 @@ static void flush_cb(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *col
  * Claude activity */
 static volatile bool screenOff = false;
 static volatile uint32_t lastTouchMs = 0;
-static const uint32_t SCREEN_SLEEP_IDLE_MS = 30UL * 60 * 1000; /* pomodoro idle */
 static const uint32_t TOUCH_WAKE_HOLD_MS = 2UL * 60 * 1000;    /* stay on after a touch */
 
 static void touch_cb(lv_indev_drv_t *drv, lv_indev_data_t *data) {
@@ -169,11 +169,31 @@ static void net_task(void *arg) {
       continue;
     }
 
+    /* manual network switch from the settings tile */
+    if (wifimgr_take_reconnect()) {
+      Serial.println("[net] network switch requested");
+      WiFi.disconnect(true);
+      vTaskDelay(pdMS_TO_TICKS(300));
+      failStreak = 0;
+    }
+
     if (WiFi.status() != WL_CONNECTED) {
       set_conn(CONN_NO_WIFI);
-      if (!wifimgr_connect(8000)) {
-        Serial.printf("[net] no known network found (streak %d)\n", ++failStreak);
-        if (failStreak >= 2) { wifimgr_request_portal(); }
+      bool ok;
+      if (wifimgr_pinned() >= 0) {
+        ok = wifimgr_connect_pinned(10000);
+        if (!ok && ++failStreak >= 3) {
+          Serial.println("[net] pinned network keeps failing, back to AUTO");
+          wifimgr_pin(-1);
+        }
+      } else {
+        ok = wifimgr_connect(8000);
+        if (!ok) {
+          Serial.printf("[net] no known network found (streak %d)\n", ++failStreak);
+          if (failStreak >= 2) wifimgr_request_portal();
+        }
+      }
+      if (!ok) {
         vTaskDelay(pdMS_TO_TICKS(2000));
         continue;
       }
@@ -341,11 +361,13 @@ void loop() {
     /* --- screen sleep --- */
     int maxPct = -1;
     for (int i = 0; i < copy.nLimits; i++) maxPct = max(maxPct, copy.limits[i].pct);
-    bool claudeAsleep = conn == CONN_OK && copy.companionOk &&
-                        !copy.active && copy.lastActivityAgoSec > 1800;
-    bool shouldSleep = claudeAsleep &&
+    uint32_t sleepMs = settings_screen_sleep_ms(); /* 0 = never */
+    bool claudeQuiet = conn == CONN_OK && copy.companionOk && !copy.active &&
+                       copy.lastActivityAgoSec > 0 &&
+                       (uint32_t)copy.lastActivityAgoSec * 1000UL > sleepMs;
+    bool shouldSleep = sleepMs > 0 && claudeQuiet &&
                        maxPct < 100 &&
-                       pomodoro_idle_ms() > SCREEN_SLEEP_IDLE_MS &&
+                       pomodoro_idle_ms() > sleepMs &&
                        (lastTouchMs == 0 || millis() - lastTouchMs > TOUCH_WAKE_HOLD_MS) &&
                        !wifimgr_portal_active();
     if (shouldSleep != screenOff) {

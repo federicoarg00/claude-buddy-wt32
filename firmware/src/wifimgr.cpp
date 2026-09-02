@@ -84,10 +84,67 @@ static void save_network(const String &ssid, const String &pass) {
   persist_saved();
 }
 
+/* ---- known networks (compile-time + saved) + manual pinning ---- */
+static const int MAX_KNOWN = 12;
+static String knownS[MAX_KNOWN], knownP[MAX_KNOWN];
+static int nKnown = 0;
+static volatile int pinnedIdx = -1;
+static volatile bool reconnectReq = false;
+
+static void known_add(const char *s, const char *p) {
+  if (!s || !s[0]) return;
+  for (int i = 0; i < nKnown; i++) if (knownS[i] == s) return;
+  if (nKnown >= MAX_KNOWN) return;
+  knownS[nKnown] = s;
+  knownP[nKnown] = p ? p : "";
+  nKnown++;
+}
+
+static void rebuild_known() {
+  String pinnedSsid = (pinnedIdx >= 0 && pinnedIdx < nKnown) ? knownS[pinnedIdx] : "";
+  nKnown = 0;
+  known_add(WIFI_SSID, WIFI_PASS);
+#define X(ssid, pass) known_add(ssid, pass);
+  WIFI_EXTRA_NETWORKS
+#undef X
+  for (int i = 0; i < nSaved; i++) known_add(savedSsid[i].c_str(), savedPass[i].c_str());
+  /* keep the pin pointing at the same ssid if it still exists */
+  pinnedIdx = -1;
+  for (int i = 0; i < nKnown; i++) if (pinnedSsid.length() && knownS[i] == pinnedSsid) pinnedIdx = i;
+}
+
+int wifimgr_known_count() { return nKnown; }
+const char *wifimgr_known_ssid(int i) { return (i >= 0 && i < nKnown) ? knownS[i].c_str() : ""; }
+int wifimgr_pinned() { return pinnedIdx; }
+
+void wifimgr_pin(int idx) {
+  pinnedIdx = (idx >= 0 && idx < nKnown) ? idx : -1;
+  reconnectReq = true;
+  Serial.printf("[wifi] pin -> %s\n", pinnedIdx >= 0 ? knownS[pinnedIdx].c_str() : "AUTO");
+}
+
+bool wifimgr_take_reconnect() {
+  bool r = reconnectReq;
+  reconnectReq = false;
+  return r;
+}
+
+bool wifimgr_connect_pinned(uint32_t waitMs) {
+  if (pinnedIdx < 0 || pinnedIdx >= nKnown) return false;
+  WiFi.begin(knownS[pinnedIdx].c_str(), knownP[pinnedIdx].c_str());
+  uint32_t t0 = millis();
+  while (millis() - t0 < waitMs) {
+    if (WiFi.status() == WL_CONNECTED) return true;
+    delay(100);
+  }
+  return false;
+}
+
 void wifimgr_init() {
   prefs.begin("wifinets", false);
   load_saved();
-  Serial.printf("[wifi] %d saved network(s) in NVS\n", nSaved);
+  rebuild_known();
+  Serial.printf("[wifi] %d saved, %d known network(s)\n", nSaved, nKnown);
 }
 
 /* ---------------------------------------------------------------- connect */
@@ -194,6 +251,7 @@ static void handle_save() {
   ssid.trim();
   if (!ssid.length()) { portal.send(200, "text/html", html_page("Falta el nombre de la red")); return; }
   save_network(ssid, pass);
+  rebuild_known();
   credsSaved = true;
   credsSavedAt = millis();
   Serial.printf("[wifi] portal saved network '%s'\n", ssid.c_str());
@@ -207,6 +265,7 @@ static void handle_del() {
     for (int j = i + 1; j < nSaved; j++) { savedSsid[j - 1] = savedSsid[j]; savedPass[j - 1] = savedPass[j]; }
     nSaved--;
     persist_saved();
+    rebuild_known();
   }
   portal.send(200, "text/html", html_page("Red borrada"));
 }
