@@ -103,10 +103,104 @@ static void refresh_net_list() {
   }
 }
 
+/* ---- per-network action dialog: Conectar / Editar / Olvidar ---- */
+static int actionIdx = -1;
+static char actionSsid[33] = "";
+
+static void open_edit_dialog();
+
+static void msgbox_cb(lv_event_t *e) {
+  lv_obj_t *mb = lv_event_get_current_target(e);
+  const char *txt = lv_msgbox_get_active_btn_text(mb);
+  lv_msgbox_close(mb);
+  if (!txt) return;
+  if (strcmp(txt, "Conectar") == 0) wifimgr_pin(actionIdx);
+  else if (strcmp(txt, "Olvidar") == 0) wifimgr_forget(actionSsid);
+  else if (strcmp(txt, "Editar") == 0) open_edit_dialog();
+  refresh_net_list();
+}
+
 static void net_btn_cb(lv_event_t *e) {
   int idx = (int)(intptr_t)lv_obj_get_user_data(lv_event_get_target(e));
-  wifimgr_pin(idx); /* -1 = auto */
-  refresh_net_list();
+  if (idx < 0) { /* AUTO acts immediately */
+    wifimgr_pin(-1);
+    refresh_net_list();
+    return;
+  }
+  actionIdx = idx;
+  strlcpy(actionSsid, wifimgr_known_ssid(idx), sizeof(actionSsid));
+  bool saved = wifimgr_is_saved(actionSsid);
+  static const char *BTNS_SAVED[] = {"Conectar", "Editar", "Olvidar", ""};
+  static const char *BTNS_FIXED[] = {"Conectar", "Editar", ""};
+  lv_obj_t *mb = lv_msgbox_create(nullptr, actionSsid,
+      saved ? " " : "red de config.h: no se puede olvidar",
+      saved ? BTNS_SAVED : BTNS_FIXED, true);
+  lv_obj_set_style_bg_color(mb, C_CARD, 0);
+  lv_obj_set_style_text_color(mb, C_TEXT, 0);
+  lv_obj_t *btns = lv_msgbox_get_btns(mb);
+  lv_obj_set_style_bg_color(btns, C_TRACK, LV_PART_ITEMS);
+  lv_obj_set_style_text_color(btns, C_TEXT, LV_PART_ITEMS);
+  lv_obj_add_event_cb(mb, msgbox_cb, LV_EVENT_VALUE_CHANGED, nullptr);
+  lv_obj_center(mb);
+}
+
+/* ---- password editor with on-screen keyboard ---- */
+static lv_obj_t *editModal = nullptr;
+
+static void close_edit() {
+  if (editModal) { lv_obj_del(editModal); editModal = nullptr; }
+}
+
+static void kb_event_cb(lv_event_t *e) {
+  lv_obj_t *kb = lv_event_get_target(e);
+  if (lv_event_get_code(e) == LV_EVENT_READY) {
+    lv_obj_t *ta = (lv_obj_t *)lv_obj_get_user_data(kb);
+    const char *pass = lv_textarea_get_text(ta);
+    if (pass[0]) {
+      wifimgr_update_password(actionSsid, pass);
+      if (wifimgr_pinned() == actionIdx) wifimgr_pin(actionIdx); /* reconnect with the new key */
+    }
+    close_edit();
+    refresh_net_list();
+  } else if (lv_event_get_code(e) == LV_EVENT_CANCEL) {
+    close_edit();
+  }
+}
+
+static void open_edit_dialog() {
+  close_edit();
+  editModal = lv_obj_create(lv_layer_top());
+  lv_obj_set_size(editModal, 480, 320);
+  lv_obj_set_pos(editModal, 0, 0);
+  lv_obj_set_style_bg_color(editModal, C_BG, 0);
+  lv_obj_set_style_border_width(editModal, 0, 0);
+  lv_obj_set_style_radius(editModal, 0, 0);
+  lv_obj_clear_flag(editModal, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t *t = lv_label_create(editModal);
+  lv_obj_set_style_text_font(t, &lv_font_montserrat_12, 0);
+  lv_obj_set_style_text_color(t, C_MUTED, 0);
+  lv_label_set_text_fmt(t, "nueva clave de %s   (%s guarda, %s cancela)",
+                        actionSsid, LV_SYMBOL_OK, LV_SYMBOL_KEYBOARD);
+  lv_obj_align(t, LV_ALIGN_TOP_LEFT, 10, 6);
+
+  lv_obj_t *ta = lv_textarea_create(editModal);
+  lv_textarea_set_one_line(ta, true);
+  lv_textarea_set_placeholder_text(ta, "contrasena");
+  lv_obj_set_size(ta, 440, 40);
+  lv_obj_align(ta, LV_ALIGN_TOP_MID, 0, 28);
+  lv_obj_set_style_bg_color(ta, C_CARD, 0);
+  lv_obj_set_style_text_color(ta, C_TEXT, 0);
+
+  lv_obj_t *kb = lv_keyboard_create(editModal);
+  lv_obj_set_size(kb, 470, 190);
+  lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, 0);
+  lv_obj_set_style_bg_color(kb, C_BG, 0);
+  lv_obj_set_style_bg_color(kb, C_CARD, LV_PART_ITEMS);
+  lv_obj_set_style_text_color(kb, C_TEXT, LV_PART_ITEMS);
+  lv_keyboard_set_textarea(kb, ta);
+  lv_obj_set_user_data(kb, ta);
+  lv_obj_add_event_cb(kb, kb_event_cb, LV_EVENT_ALL, nullptr);
 }
 
 /* ---------------------------------------------------------------- dropdowns */

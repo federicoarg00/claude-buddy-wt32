@@ -93,9 +93,12 @@ pio run -e wt32-sc01 -t upload                 # o: python -m platformio run ...
 Orden de pantallas: **Ajustes ⟷ Claudito ⟷ Pomodoro ⟷ Calendario**.
 
 - **WiFi**: muestra la red actual con su señal y lista todas las conocidas.
-  Tocá una para **fijarla** (Claudito se conecta solo a esa — útil cuando la
-  automática elige una red que anda mal). "AUTO" vuelve al modo mejor-señal;
-  si la red fijada falla 3 veces seguidas, vuelve a AUTO solo.
+  Tocá una y elegí: **Conectar** (la fija — Claudito se conecta solo a esa,
+  útil cuando la automática elige una que anda mal), **Editar** (cambiar la
+  contraseña con teclado en pantalla) u **Olvidar** (solo redes guardadas
+  por portal; las de `config.h` van compiladas). "AUTO" vuelve al modo
+  mejor-señal; una red fijada que falla 3 veces vuelve a AUTO sola.
+  "+ red nueva" abre el portal para agregar redes desconocidas.
 - **Pomodoro**: duración del foco (25/30/45/50), descanso corto (5/10/15) y
   descanso largo (15/20/30). Aplica a la próxima sesión.
 - **Apagar pantalla**: 15/30/60 min de inactividad total, o nunca.

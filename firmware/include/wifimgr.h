@@ -27,3 +27,6 @@ void wifimgr_pin(int idx);            /* -1 = auto; triggers a reconnect */
 int wifimgr_pinned();
 bool wifimgr_take_reconnect();        /* consumed by net_task */
 bool wifimgr_connect_pinned(uint32_t waitMs);
+bool wifimgr_is_saved(const char *ssid);    /* portal-saved (forgettable) vs config.h */
+void wifimgr_forget(const char *ssid);      /* remove a saved network */
+void wifimgr_update_password(const char *ssid, const char *pass);

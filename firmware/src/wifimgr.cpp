@@ -103,11 +103,13 @@ static void known_add(const char *s, const char *p) {
 static void rebuild_known() {
   String pinnedSsid = (pinnedIdx >= 0 && pinnedIdx < nKnown) ? knownS[pinnedIdx] : "";
   nKnown = 0;
+  /* saved networks first: an edited password overrides a config.h entry
+   * with the same ssid (known_add dedupes keeping the first) */
+  for (int i = 0; i < nSaved; i++) known_add(savedSsid[i].c_str(), savedPass[i].c_str());
   known_add(WIFI_SSID, WIFI_PASS);
 #define X(ssid, pass) known_add(ssid, pass);
   WIFI_EXTRA_NETWORKS
 #undef X
-  for (int i = 0; i < nSaved; i++) known_add(savedSsid[i].c_str(), savedPass[i].c_str());
   /* keep the pin pointing at the same ssid if it still exists */
   pinnedIdx = -1;
   for (int i = 0; i < nKnown; i++) if (pinnedSsid.length() && knownS[i] == pinnedSsid) pinnedIdx = i;
@@ -138,6 +140,30 @@ bool wifimgr_connect_pinned(uint32_t waitMs) {
     delay(100);
   }
   return false;
+}
+
+bool wifimgr_is_saved(const char *ssid) {
+  for (int i = 0; i < nSaved; i++) if (savedSsid[i] == ssid) return true;
+  return false;
+}
+
+void wifimgr_forget(const char *ssid) {
+  for (int i = 0; i < nSaved; i++) {
+    if (savedSsid[i] == ssid) {
+      Serial.printf("[wifi] forgetting '%s'\n", ssid);
+      for (int j = i + 1; j < nSaved; j++) { savedSsid[j - 1] = savedSsid[j]; savedPass[j - 1] = savedPass[j]; }
+      nSaved--;
+      persist_saved();
+      rebuild_known(); /* clears the pin too if it pointed at this ssid */
+      return;
+    }
+  }
+}
+
+void wifimgr_update_password(const char *ssid, const char *pass) {
+  save_network(String(ssid), String(pass));
+  rebuild_known();
+  Serial.printf("[wifi] password updated for '%s'\n", ssid);
 }
 
 void wifimgr_init() {
