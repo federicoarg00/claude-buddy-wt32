@@ -40,6 +40,7 @@ struct BuddyData {
 void ui_init();
 void ui_update(ConnState conn, const BuddyData &d);
 void ui_show_pomodoro_tile();
+void ui_show_buddy_tile();
 /* Show "provisioná el buddy: IP x.x.x.x" while no OAuth token is stored. */
 void ui_set_provision_hint(const char *ip);
 /* Free-form hint under the status label (portal instructions etc). */

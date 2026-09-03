@@ -280,6 +280,10 @@ void ui_show_pomodoro_tile() {
   lv_obj_set_tile_id(tv, 2, 0, LV_ANIM_ON);
 }
 
+void ui_show_buddy_tile() {
+  lv_obj_set_tile_id(tv, 1, 0, LV_ANIM_ON);
+}
+
 void ui_set_provision_hint(const char *ip) {
   if (ip && ip[0]) {
     lv_label_set_text_fmt(provHint, "provisioname: node provision.js\nIP: %s", ip);

@@ -3,6 +3,7 @@
 #include "settings.h"
 #include "wifimgr.h"
 #include "pomodoro.h"
+#include "ui.h"
 #include <Arduino.h>
 #include <WiFi.h>
 #include <Preferences.h>
@@ -167,7 +168,7 @@ void settings_create(lv_obj_t *tile) {
   lv_obj_align(curNetLbl, LV_ALIGN_TOP_LEFT, 14, 32);
 
   netList = lv_obj_create(tile);
-  lv_obj_set_size(netList, 220, 250);
+  lv_obj_set_size(netList, 220, 206);
   lv_obj_align(netList, LV_ALIGN_TOP_LEFT, 10, 54);
   lv_obj_set_style_bg_opa(netList, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(netList, 0, 0);
@@ -177,6 +178,23 @@ void settings_create(lv_obj_t *tile) {
   lv_obj_set_scroll_dir(netList, LV_DIR_VER);
 
   mk_net_btn(-1); /* AUTO; the network buttons are synced by refresh_net_list */
+
+  /* add a NEW (unknown) network: opens the config portal and jumps to the
+   * buddy tile, where the AP name/password/URL instructions appear */
+  lv_obj_t *addBtn = lv_btn_create(tile);
+  lv_obj_set_size(addBtn, 204, 40);
+  lv_obj_align(addBtn, LV_ALIGN_TOP_LEFT, 12, 266);
+  lv_obj_set_style_bg_color(addBtn, C_ORANGE, 0);
+  lv_obj_set_style_radius(addBtn, 9, 0);
+  lv_obj_add_event_cb(addBtn, [](lv_event_t *) {
+    wifimgr_request_portal();
+    ui_show_buddy_tile();
+  }, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t *addLbl = lv_label_create(addBtn);
+  lv_obj_set_style_text_font(addLbl, &lv_font_montserrat_12, 0);
+  lv_obj_set_style_text_color(addLbl, lv_color_hex(0x201A16), 0);
+  lv_label_set_text(addLbl, LV_SYMBOL_PLUS " red nueva (portal)");
+  lv_obj_center(addLbl);
 
   /* ---- right: settings ---- */
   lv_obj_t *panel = lv_obj_create(tile);
