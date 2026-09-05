@@ -316,14 +316,57 @@ function buildStatus() {
  * the companion delivers instead of waiting to be polled.
  * Comma-separated override: BUDDY_PUSH=http://192.168.68.63/status,...
  */
-const PUSH_TARGETS = (process.env.BUDDY_PUSH ||
-  'http://192.168.68.72/status,http://192.168.68.60/status,http://192.168.68.63/status,http://192.168.100.116/status')
+const PUSH_TARGETS = (process.env.BUDDY_PUSH || '')
   .split(',').map((s) => s.trim()).filter(Boolean);
 const pushOk = new Map();
 
+/* The buddy's DHCP address drifts, so instead of hardcoding IPs the
+ * companion sweeps the home subnets for the firmware's GET /ping marker
+ * ("claudito") — at startup and again whenever pushes stop landing. */
+const BUDDY_SUBNETS = (process.env.BUDDY_SUBNETS || '192.168.68,192.168.100')
+  .split(',').map((s) => s.trim()).filter(Boolean);
+let discoveredIp = null;
+let discovering = false;
+let missedPushes = 0;
+
+async function discoverBuddy() {
+  if (discovering) return;
+  discovering = true;
+  try {
+    for (const sn of BUDDY_SUBNETS) {
+      const ips = Array.from({ length: 254 }, (_, i) => `${sn}.${i + 1}`);
+      const CONC = 50;
+      for (let off = 0; off < ips.length; off += CONC) {
+        const hits = await Promise.all(ips.slice(off, off + CONC).map(async (ip) => {
+          try {
+            const r = await fetch(`http://${ip}/ping`, { signal: AbortSignal.timeout(600) });
+            if (r.ok && (await r.text()).trim() === 'claudito') return ip;
+          } catch { /* not the buddy */ }
+          return null;
+        }));
+        const hit = hits.find(Boolean);
+        if (hit) {
+          if (hit !== discoveredIp) console.log(`[push] buddy discovered at ${hit}`);
+          discoveredIp = hit;
+          missedPushes = 0;
+          return;
+        }
+      }
+    }
+    console.log('[push] discovery sweep found no buddy');
+  } finally {
+    discovering = false;
+  }
+}
+
 async function pushToBuddies() {
   const body = JSON.stringify(buildStatus());
-  for (const url of PUSH_TARGETS) {
+  const targets = [
+    ...(discoveredIp ? [`http://${discoveredIp}/status`] : []),
+    ...PUSH_TARGETS,
+  ];
+  let delivered = false;
+  for (const url of targets) {
     try {
       const r = await fetch(url, {
         method: 'POST',
@@ -333,13 +376,19 @@ async function pushToBuddies() {
       });
       if (r.ok && pushOk.get(url) !== true) console.log(`[push] delivering to ${url}`);
       pushOk.set(url, r.ok);
+      if (r.ok) delivered = true;
     } catch {
       if (pushOk.get(url) === true) console.log(`[push] lost ${url}`);
       pushOk.set(url, false);
     }
   }
+  if (!delivered && ++missedPushes >= 2) {
+    missedPushes = 0;
+    discoverBuddy(); /* fire and forget; next cycle uses the result */
+  }
 }
 setInterval(pushToBuddies, 15_000);
+discoverBuddy();
 
 // ---------------------------------------------------------------- server
 const server = http.createServer((req, res) => {

@@ -128,6 +128,19 @@ static bool refresh_tokens() {
   serializeJson(body, payload);
   int code = http.POST(payload);
   Serial.printf("[direct] token refresh -> %d\n", code);
+  if (code == 400 || code == 401) {
+    /* invalid_grant: the session is dead (expired or rotated away).
+     * Wipe it so the provisioning hint appears instead of retrying forever. */
+    Serial.println("[direct] session invalid - re-provisioning required");
+    accessToken = "";
+    refreshToken = "";
+    expiresAtMs = 0;
+    prefs.remove("at");
+    prefs.remove("rt");
+    prefs.remove("exp");
+    http.end();
+    return false;
+  }
   if (code != 200) { http.end(); return false; }
   JsonDocument doc;
   DeserializationError err = deserializeJson(doc, http.getString());

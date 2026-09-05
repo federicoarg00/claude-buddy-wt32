@@ -256,6 +256,9 @@ static void prov_server_start() {
     directapi_store_tokens(at, rt, doc["expiresAt"] | 0LL, doc["plan"] | "");
     provServer.send(200, "application/json", "{\"ok\":true}");
   });
+  provServer.on("/ping", HTTP_GET, []() { /* identity marker for companion discovery */
+    provServer.send(200, "text/plain", "claudito");
+  });
   provServer.on("/status", HTTP_POST, []() {
     BuddyData fresh;
     if (!parse_status_payload(provServer.arg("plain"), fresh)) {
